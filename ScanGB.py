@@ -18,7 +18,7 @@ from gbmaker import *
 
 #GB definition
 gb_plane=[1,1,0] #GB plane
-slab_min_t=1     #slab thickness in hkl units
+slab_min_t=3     #slab thickness in hkl units
 
 Symmetric=False  #whether slabs should be symmetric
 Grain1_slabid=1  #grain1 id
@@ -30,11 +30,11 @@ merge_tol=1.5    #distance for which atoms are merged (if using)
 vacuum=5.0       #vacuum gap to use for output of slab structures
 
 #Parameters for gamma surface scan (no opt)
-Na=2
-Nb=2
-Nz=2
+Na=4
+Nb=8
+Nz=6
 Delz_min=1.0
-Delz_max=1.1
+Delz_max=2.0
 MinBond=1.5
 
 
@@ -42,31 +42,33 @@ MinBond=1.5
 # MAIN CODE                           #
 #######################################
 
+file=open("GBScan.dat","w",buffering=1)
+
 #Read and analyse bulk structure provided
 prim = pymatgen.Structure.from_str(open("POSCAR-bulk").read(), fmt="poscar")
 sga = SpacegroupAnalyzer(prim)
 bulk=sga.get_conventional_standard_structure() #conventional needed for surface cells
-print('STRUCTURE PROVIDED:')
-print(bulk)
-print()
+file.write("STRUCTURE PROVIDED:\n")
+file.write(str(bulk))
+file.write("\n\n")
 
 #Generate surf slabs and output for visualisation
 SlabGen=SlabGenerator(bulk,gb_plane,slab_min_t,slab_min_t,lll_reduce=False, center_slab=False, in_unit_planes=True, primitive=True, max_normal_search=None,reorient_lattice=True)
 slabs=SlabGen.get_slabs(symmetrize=Symmetric)
-print('SURFACE SLABS:')
-print('Num slabs: ',len(slabs))
+file.write("SURFACE SLABS:\n")
+file.write("Num slabs: {}\n".format(len(slabs)))
 for i in range(0,len(slabs)):
-  print('Slab ', i, ', symmetric: ',slabs[0].is_symmetric())
+  file.write("Slab {}, symmetric: {}\n".format(i,slabs[0].is_symmetric()))
   slab=genslab(slabs[i],vacuum=vacuum)
   slab.get_sorted_structure().to(filename='POSCAR-slab-{}'.format(i), fmt="poscar")
-print()
+file.write("\n")
 
 #Loop over translations in a,b and z  
-print('GRAIN BOUNDARY GAMMA SURFACE SCAN:')
-print('GB plane: ',gb_plane)
-print('Grain 1 id: ',Grain1_slabid)
-print('Grain 2 id: ',Grain2_slabid)
-print('Del_a  Del_b  Del_z  E')
+file.write("GRAIN BOUNDARY GAMMA SURFACE SCAN:\n")
+file.write("GB plane: {}\n".format(gb_plane))
+file.write("Grain 1 id: {}\n".format(Grain1_slabid))
+file.write("Grain 2 id: {}\n".format(Grain2_slabid))
+file.write("Del_a  Del_b  Del_z  E\n")
 latticematrix=slab.lattice.matrix  
 for i in range(0, Na):
   for j in range(0,Nb):
@@ -83,7 +85,9 @@ for i in range(0, Na):
       if GBSlab.is_valid(tol=MinBond):
         #Vasp run (need INCAR, POTCAR and KPOINTS in dir)
         subprocess.run(["cp","POSCAR-GB","POSCAR"])
-        subprocess.check_output(["mpirun","-np","12","vasp_gam"])
+        subprocess.check_output(["mpirun","-np","240","vasp_gam"])
         line=subprocess.check_output(["grep","rgy  w","OUTCAR"]).decode('ASCII').split()
         E=line[6]
-        print("{:.4f} {:.4f} {:.4f} {:.6f}".format(float(i/Na),float((j/Nb)),float(GB_z_shift),float(E)))
+        file.write("{:.4f} {:.4f} {:.4f} {:.6f}\n".format(float(i/Na),float((j/Nb)),float(GB_z_shift),float(E)))
+
+file.close()
