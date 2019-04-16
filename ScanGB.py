@@ -58,7 +58,7 @@ slabs=SlabGen.get_slabs(symmetrize=Symmetric)
 file.write("SURFACE SLABS:\n")
 file.write("Num slabs: {}\n".format(len(slabs)))
 for i in range(0,len(slabs)):
-  file.write("Slab {}, symmetric: {}\n".format(i,slabs[0].is_symmetric()))
+  file.write("Slab {}, symmetric: {}\n".format(i,slabs[i].is_symmetric()))
   slab=genslab(slabs[i],vacuum=vacuum)
   slab.get_sorted_structure().to(filename='POSCAR-slab-{}'.format(i), fmt="poscar")
 file.write("\n")

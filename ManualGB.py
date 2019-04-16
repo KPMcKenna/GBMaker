@@ -61,7 +61,7 @@ slabs=SlabGen.get_slabs(symmetrize=Symmetric)
 print('SURFACE SLABS:')
 print('Num slabs: ',len(slabs))
 for i in range(0,len(slabs)):
-  print('Slab ', i, ', symmetric: ',slabs[0].is_symmetric())
+  print('Slab ', i, ', symmetric: ',slabs[i].is_symmetric())
   slab=genslab(slabs[i],vacuum=vacuum)
   slab.get_sorted_structure().to(filename='POSCAR-slab-{}'.format(i), fmt="poscar")
 print()
