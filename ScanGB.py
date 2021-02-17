@@ -1,5 +1,5 @@
 #works with pymatgen Version: 2019.1.24
-import numpy
+import numpy as np
 import pymatgen
 import subprocess
 from pymatgen.core.surface import Structure, Slab, SlabGenerator
@@ -36,9 +36,7 @@ vacuum=5.0       #vacuum gap to use for output of slab structures
 #Parameters for gamma surface scan
 Na=4
 Nb=8
-Nz=6
-Delz_min=1.0
-Delz_max=2.0
+Delz=2.0
 MinBond=1.5
 
 
@@ -46,7 +44,7 @@ MinBond=1.5
 # MAIN CODE                           #
 #######################################
 
-file=open("GBScan.dat","w",buffering=1)
+file1=open("GBScan.dat","w",buffering=1)
 
 #Read and analyse bulk structure provided
 prim = pymatgen.Structure.from_str(open("POSCAR-bulk").read(), fmt="poscar")
@@ -64,21 +62,23 @@ for i in range(0,len(slabs)):
 latticematrix=slab.lattice.matrix  
 for i in range(0, Na):
   for j in range(0,Nb):
-    for k in range(0,Nz):
       GB_x_shift=(i/Na)*latticematrix[0][0]+(j/Nb)*latticematrix[1][0]
       GB_y_shift=(i/Na)*latticematrix[0][1]+(j/Nb)*latticematrix[1][1]
-      GB_z_shift=(((Delz_max-Delz_min)/(Nz-1))*k)+Delz_min
-      GB_z_shift1=GB_z_shift
-      GB_z_shift2=GB_z_shift
-      
+      GB_z_shift1=Delz
+      GB_z_shift2=Delz
+       
       #Construct and output POSCAR for GB
       GBSlab=gengb(slabs[Grain1_slabid],slabs[Grain2_slabid],GB_x_shift,GB_y_shift,GB_z_shift1,GB_z_shift2,MergeOn,merge_tol,MirrorX,MirrorY,MirrorZ)
       GBSlab.get_sorted_structure().to(filename='POSCAR', fmt="poscar")  
       if GBSlab.is_valid(tol=MinBond):
-        #Vasp run (need INCAR, POTCAR and KPOINTS in dir)
+        #Vasp run (need INCAR, POTCAR and KPOINTS in dir and change mpirun as needed)
         subprocess.check_output(["mpirun","-np","240","vasp_gam"])
         line=subprocess.check_output(["grep","rgy  w","OUTCAR"]).decode('ASCII').split()
         E=line[6]
-        file.write("{:.4f} {:.4f} {:.4f} {:.6f}\n".format(float(i/Na),float((j/Nb)),float(GB_z_shift),float(E)))
+        file1.write("{:.4f} {:.4f} {:.6f}\n".format(float(i/Na),float((j/Nb)),float(E)))
+      else:
+        file1.write("{:.4f} {:.4f} {:.6f}\n".format(float(i/Na),float((j/Nb)),float(np.inf)))
 
-file.close()
+
+file1.close()
+file2.close()
