@@ -17,9 +17,9 @@ from gbmaker import *
 #Note: intial bulk structure to be provided as POSCAR-bulk in working directory
 
 #GB definition
-gb_plane=[3,1,0]  #GB plane
+gb_plane=[0,1,1]  #GB plane
 slab_min_t=3.5     #slab thickness in hkl units
-GB_a_shift=0.500  #relative grain shift in a parallel to GB
+GB_a_shift=0.000  #relative grain shift in a parallel to GB
 GB_b_shift=0.000  #relative grain shift in b parallel to GB
 GB_z_shift1=2.0   #separation in z between teminating plabes for GB 1
 GB_z_shift2=2.0   #separation in z between teminating plabes for GB 2
@@ -30,8 +30,8 @@ Grain2_slabid=0  #grain2 id
 
 #Grain2 transformation (e.g. for sym tilt GB MirrorX=False, MirrorY=False, MirrorZ=True)
 MirrorX=False
-MirrorY=False
-MirrorZ=True
+MirrorY=True
+MirrorZ=False
 
 MergeOn=False    #whether or not to merge atoms if closer than merge_tol
 merge_tol=1.5    #distance for which atoms are merged (if using)
