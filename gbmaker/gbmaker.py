@@ -161,7 +161,7 @@ class Grain(Structure):
         return self._thickness
 
     @thickness.setter
-    def thickness(self, thickness: float, hkl_units: bool = False):
+    def thickness(self, thickness: float):
         """Sets the thickness of the grain as close as possible to the supplied value.
 
         This method will set the thickness of the grain to the value supplied,
@@ -173,18 +173,34 @@ class Grain(Structure):
 
         thickness: The desired thickness of the grain in Angstrom.
         """
-        if hkl_units:
-            # if hkl_spacing wasn't supplied try and figure it out.
-            if self.hkl_spacing is None:
-                self.hkl_spacing = (
-                    SpacegroupAnalyzer(self.oriented_unit_cell)
-                    .get_conventional_standard_structure()
-                    .lattice.d_hkl(self.miller_index)
-                )
-            thickness *= self.hkl_spacing
         thickness -= self.thickness
         n = np.ceil(thickness / self.bulk_thickness)
-        self.bulk_repeats += n
+        self.bulk_repeats += int(n)
+
+    @thickness.setter
+    def hkl_thickness(self, thickness: float):
+        """Sets the thickness of the grain as close as possible to the supplied value.
+
+        This method will set the thickness of the grain to the value supplied,
+        or as close as possible. It does this by calculating the required amount
+        of oriented unit cells to add to the surface representation of the grain.
+        If the value supplied is not a multiple of the bulk thickness then the
+        smallest amount of bulk repeats are added to make the thickness larger
+        than the supplied value.
+
+        thickness: The desired thickness of the grain in Angstrom.
+        """
+        # if hkl_spacing wasn't supplied try and figure it out.
+        if self.hkl_spacing is None:
+            self.hkl_spacing = (
+                SpacegroupAnalyzer(self.oriented_unit_cell)
+                .get_conventional_standard_structure()
+                .lattice.d_hkl(self.miller_index)
+            )
+        thickness *= self.hkl_spacing
+        thickness -= self.thickness
+        n = np.ceil(thickness / self.bulk_thickness)
+        self.bulk_repeats += int(n)
 
     @property
     def bulk_repeats(self) -> int:
