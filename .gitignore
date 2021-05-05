@@ -1,4 +1,3 @@
-poetry.lock
 *.vasp
 
 # Github Python gitignore

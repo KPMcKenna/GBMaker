@@ -7,14 +7,13 @@ from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
 from pymatgen.util.typing import ArrayLike, SpeciesLike
 from typing import Dict, Sequence, List, Any
 from pymatgen.analysis.structure_matcher import StructureMatcher
+from functools import reduce
 
 
 class GrainGenerator(SlabGenerator):
     """Class for generating Grains.
 
     TODO:
-      * Re-write the __init__ function to make use of primitive cells whilst still
-        retaining the conventional cell's miller indexing.
       * Tidy up implementation: slab -> grain, np.ndarray -> ArrayLike, etc
       * Add more comments to explain ideas behind methods.
       * Docstring the functions
@@ -26,31 +25,43 @@ class GrainGenerator(SlabGenerator):
         miller_index: Sequence[int],
     ):
         sg = SpacegroupAnalyzer(bulk_cell)
-        # primitive_cell = sg.get_primitive_standard_structure()
-        # T = sg.get_conventional_to_primitive_transformation_matrix()
         unit_cell = sg.get_conventional_standard_structure()
-        # primative_miller_index = np.dot(T, miller_index)
-        # super().__init__(primitive_cell, primative_miller_index, None, None)
-        super().__init__(unit_cell, miller_index, None, None)
-        self.parent = unit_cell
-        self.oriented_unit_cell.translate_sites(
-            indices=range(len(self.oriented_unit_cell)),
-            vector=-self.oriented_unit_cell.frac_coords.min(axis=0),
+        primitive_cell = sg.get_primitive_standard_structure()
+        T = sg.get_conventional_to_primitive_transformation_matrix()
+        primative_miller_index = np.dot(T, miller_index)
+        primative_miller_index /= reduce(float_gcd, primative_miller_index)
+        primative_miller_index = np.array(
+            np.round(primative_miller_index, 1), dtype=int
         )
+        super().__init__(primitive_cell, primative_miller_index, None, None)
+        self.parent = unit_cell
         self.miller_index = miller_index
+        R = rotation(np.cross(*self.oriented_unit_cell.lattice.matrix[:2]))
+        symmop = SymmOp.from_rotation_and_translation(rotation_matrix=R)
+        self.oriented_unit_cell.apply_operation(symmop)
+        theta = np.arccos(
+            self.oriented_unit_cell.lattice.matrix[0, 0]
+            / self.oriented_unit_cell.lattice.a
+        )
+        symmop = SymmOp.from_axis_angle_and_translation(
+            [0, 0, 1],
+            theta,
+            True,
+        )
+        self.oriented_unit_cell.apply_operation(symmop)
 
-    def get_grain(self, shift: float = 0.0, tol: float = 0.1) -> "Grain":
+    def get_grain(self, shift: float = 0.0) -> "Grain":
         oriented_unit_cell = self.oriented_unit_cell.copy()
         oriented_unit_cell.translate_sites(
             indices=range(len(oriented_unit_cell)),
-            vector=[0, 0, shift],
+            vector=[0, 0, -shift],
+            to_unit_cell=True,
         )
         grain = Grain.from_oriented_unit_cell(
             oriented_unit_cell,
             self.miller_index,
             hkl_spacing=self.parent.lattice.d_hkl(self.miller_index),
         )
-        grain.get_primitive_structure(tol)
         return grain
 
     def get_grains(
@@ -70,7 +81,7 @@ class GrainGenerator(SlabGenerator):
             for r in c_ranges:
                 if r[0] <= shift <= r[1]:
                     bonds_broken += 1
-            grain = self.get_grain(shift, tol=tol)
+            grain = self.get_grain(shift)
             if bonds_broken <= max_broken_bonds:
                 grains.append(grain)
             elif repair:
@@ -100,8 +111,6 @@ class Grain(Structure):
     """A grain class the builds upon a pymatgen Structure.
 
     TODO:
-      * Add x & y mirroring. (a & b?)
-      * Rotate grain and oriented unit cell a -> x for neatness.
       * Add missing docstrings.
       * Add a pretty print for the structure.
     """
@@ -218,32 +227,33 @@ class Grain(Structure):
         """
         # convert n to be how many more/less unit cells are required.
         n -= self.bulk_repeats
-        thickness = self.scaled_c_vector
         self._thickness += n * self.oriented_unit_cell.lattice.matrix[2, 2]
         self._thickness_n += n
+        bulk_c_vector = self.oriented_unit_cell.lattice.matrix[2]
+        scaled_c_vector = bulk_c_vector[2] * self.c_vector / self.c_vector[2]
+        thickness = bulk_c_vector * scaled_c_vector[2] / bulk_c_vector[2]
         if n < 0:
             # if the sites are sorted by c then the first |n| lots of bulk cell
             # atoms need to be removed.
             self.sort(key=lambda site: site.frac_coords[2], reverse=True)
             self.remove_sites(range(-n * len(self.oriented_unit_cell)))
-            self.c_vector += n * self.oriented_unit_cell.lattice.matrix[2]
+            self.c_vector += n * scaled_c_vector
         elif n > 0:
-            bulk_c_vector = self.oriented_unit_cell.lattice.matrix[2]
             mirror_array = np.power([-1, -1, -1], self.mirror_array)
-            self.c_vector += n * bulk_c_vector
+            self.c_vector += n * scaled_c_vector
             mirror_vector = thickness + bulk_c_vector
             mirror_vector *= float(self.mirror_z) * -mirror_array
             if not self.mirror_z:
                 self.translate_sites(
                     indices=range(len(self)),
-                    vector=n * bulk_c_vector,
+                    vector=n * bulk_c_vector * mirror_array,
                     frac_coords=False,
                     to_unit_cell=False,
                 )
             for _n in reversed(range(n)):
                 for site in reversed(self.oriented_unit_cell.sites):
                     coords = site.coords * mirror_array
-                    coords += _n * bulk_c_vector + mirror_vector
+                    coords += _n * bulk_c_vector * mirror_array + mirror_vector
                     self.insert(
                         0,
                         site.species,
@@ -261,14 +271,14 @@ class Grain(Structure):
         lattice = self.lattice.matrix.copy()
         lattice[2] = c
         lattice = Lattice(lattice)
-        c_ratio = lattice.c / self.lattice.c
+        coords = self.cart_coords
         self._lattice = lattice
-        for site in self._sites:
-            site.frac_coords /= [1, 1, c_ratio]
-            site.lattice = lattice
+        for (c, site) in zip(coords, self._sites):
+            site._lattice = lattice
+            site.coords = c
 
     @property
-    def scaled_c_vector(self) -> float:
+    def scaled_c_vector(self) -> np.ndarray:
         """The thickness of the grain in Angstrom."""
         k = self.c_vector / self.lattice.c
         return (self.thickness / k[2]) * k
@@ -291,6 +301,8 @@ class Grain(Structure):
     def mirror_x(self, b: bool):
         if b != self.mirror_x:
             self._mirror[0] = b
+            for site in self._sites:
+                site.coords[0] *= -1
 
     @property
     def mirror_y(self) -> bool:
@@ -301,6 +313,8 @@ class Grain(Structure):
     def mirror_y(self, b: bool):
         if b != self.mirror_y:
             self._mirror[1] = b
+            for site in self._sites:
+                site.coords[1] *= -1
 
     @property
     def mirror_z(self) -> bool:
@@ -311,10 +325,12 @@ class Grain(Structure):
     def mirror_z(self, b: bool):
         if b != self.mirror_z:
             self._mirror[2] = b
-            thickness = self.thickness / self.lattice.matrix[2, 2]
+            thickness = self.scaled_c_vector * -np.power(
+                [-1, -1, -1], self.mirror_array
+            )
             for site in self._sites:
-                coords = [site.coords[0], site.coords[1], -site.coords[2]]
-                coords += thickness * self.c_vector
+                coords = np.array([site.coords[0], site.coords[1], -site.coords[2]])
+                coords += thickness
                 site.coords = coords
 
     def as_dict(self, verbosity: int = 1, fmt: str = None, **kwargs):
@@ -337,6 +353,11 @@ class Grain(Structure):
             bulk_repeats=self.bulk_repeats,
             hkl_spacing=self.hkl_spacing,
         )
+
+    def orthogonalise_c(self):
+        c_vector = self.c_vector
+        c_vector[:2] = 0
+        self.c_vector = c_vector
 
     def symmetrize_surfaces(self, tol: float = 1e-3) -> Sequence["Grain"]:
         """Attempt to symmetrize both surfaces of the grain.
@@ -397,6 +418,11 @@ class Grain(Structure):
         bulk_repeats: int = 1,
         hkl_spacing: float = None,
     ) -> "Grain":
+        oriented_unit_cell.sort(key=lambda site: site.coords[2])
+        oriented_unit_cell.translate_sites(
+            range(len(oriented_unit_cell)),
+            -oriented_unit_cell.frac_coords[0],
+        )
         grain = cls(
             oriented_unit_cell,
             miller_index,
@@ -419,7 +445,7 @@ class GrainBoundary:
 
     TODO:
       * Docstrings.
-      * Lattice matching -> scale 2nd grain (find Moire lattice?).
+      * Lattice matching -> find Moire lattice.
     """
 
     def __init__(
@@ -509,7 +535,9 @@ class GrainBoundary:
         lattice[2] /= self.grain_1.lattice.c
         lattice[2] *= height / lattice[2, 2]
         translation_vec = self.translation_vec + self.grain_1.scaled_c_vector
-        coords = np.add(self.grain_2.cart_coords, translation_vec)
+        coords = np.mod(self.grain_2.frac_coords, 1)
+        coords = self.grain_1.lattice.get_cartesian_coords(coords)
+        coords = np.add(coords, translation_vec)
         site_properties = self.grain_1.site_properties
         for key, value in site_properties.items():
             value_2 = self.grain_2.site_properties.get(key)
@@ -536,7 +564,7 @@ class GrainBoundary:
 
 def rotation(vector: ArrayLike, axis: ArrayLike = [0, 0, 1]) -> np.ndarray:
     r = np.array(vector) / np.linalg.norm(vector)
-    theta, b = np.arccos(r[2]), np.cross(r, np.array(axis))
+    theta, b = np.arccos(np.dot(r, axis)), np.cross(r, np.array(axis))
     mag_b = np.linalg.norm(b)
     if mag_b == 0:
         return np.eye(3)
@@ -563,3 +591,14 @@ def rotation(vector: ArrayLike, axis: ArrayLike = [0, 0, 1]) -> np.ndarray:
         ]
     )
     return Q
+
+
+def float_gcd(a, b, rtol=1e-05, atol=1e-08):
+    """Compute the gcd of two floats.
+
+    https://stackoverflow.com/a/45325587
+    """
+    t = min(abs(a), abs(b))
+    while abs(b) > rtol * t + atol:
+        a, b = b, a % b
+    return a

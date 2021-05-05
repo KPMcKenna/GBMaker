@@ -8,6 +8,10 @@ license = "MIT"
 [tool.poetry.dependencies]
 python = "^3.7"
 pymatgen = "^2022.0.6"
+vtk = {version = "^9.0.1", optional = true}
+
+[tool.poetry.extras]
+vis = ["vtk"]
 
 [tool.poetry.dev-dependencies]
 black = "^21.4b2"
