@@ -57,6 +57,11 @@ class GrainGenerator(SlabGenerator):
             vector=[0, 0, -shift],
             to_unit_cell=True,
         )
+        oriented_unit_cell.sort(key=lambda site: site.frac_coords[2])
+        oriented_unit_cell.translate_sites(
+            range(len(oriented_unit_cell)),
+            -oriented_unit_cell.frac_coords[0],
+        )
         grain = Grain.from_oriented_unit_cell(
             oriented_unit_cell,
             self.miller_index,
@@ -99,6 +104,8 @@ class GrainGenerator(SlabGenerator):
             if symmetrize:
                 grain = g[0].symmetrize_surfaces()
                 new_grains.extend(grain)
+                for grain in new_grains:
+                    print(grain, grain.oriented_unit_cell)
             else:
                 new_grains.append(g[0])
 
@@ -150,15 +157,8 @@ class Grain(Structure):
         self.miller_index = miller_index
         self.hkl_spacing = hkl_spacing
         self.oriented_unit_cell = oriented_unit_cell
-        R = rotation(np.cross(*oriented_unit_cell.lattice.matrix[:2]))
-        symmop = SymmOp.from_rotation_and_translation(rotation_matrix=R)
-        self.oriented_unit_cell.apply_operation(symmop)
         self.bulk_thickness = self.oriented_unit_cell.lattice.matrix[2, 2]
         self._thickness_n = bulk_repeats
-        R = rotation(np.cross(*self.lattice.matrix[:2]))
-        symmop = SymmOp.from_rotation_and_translation(rotation_matrix=R)
-        self.apply_operation(symmop)
-        self.oriented_unit_cell.sort(key=lambda site: site.frac_coords[2])
         self.mirror_x = mirror_x
         self.mirror_y = mirror_y
         self.mirror_z = mirror_z
@@ -227,6 +227,7 @@ class Grain(Structure):
         """
         # convert n to be how many more/less unit cells are required.
         n -= self.bulk_repeats
+        self._thickness = self.cart_coords.max(axis=0)[2]
         self._thickness += n * self.oriented_unit_cell.lattice.matrix[2, 2]
         self._thickness_n += n
         bulk_c_vector = self.oriented_unit_cell.lattice.matrix[2]
@@ -344,7 +345,7 @@ class Grain(Structure):
         if site_properties is not None:
             properties.update(site_properties)
         return Grain(
-            self.oriented_unit_cell,
+            self.oriented_unit_cell.copy(),
             self.miller_index,
             self,
             mirror_x=self.mirror_x,
@@ -388,7 +389,7 @@ class Grain(Structure):
                 sg = SpacegroupAnalyzer(slab, symprec=tol)
                 if sg.is_laue():
                     if not top:
-                        vector = [0, 0, -slab.frac_coords.min(axis=0)[2]]
+                        vector = -slab.frac_coords[-1]
                         vector = slab.lattice.get_cartesian_coords(vector)
                         slab.translate_sites(
                             indices=range(len(slab)),
@@ -399,11 +400,20 @@ class Grain(Structure):
                             indices=range(len(slab.oriented_unit_cell)),
                             vector=vector,
                             frac_coords=False,
+                            to_unit_cell=True,
                         )
                     # reset the slab thickness as we have removed atoms,
                     # reducing the bulk thickness.
                     slab._thickness_n = 1
+                    slab.sort(key=lambda site: site.frac_coords[2])
                     nonstoich_slabs.append(slab)
+                    print("sym")
+                    print(
+                        nonstoich_slabs[0].oriented_unit_cell,
+                        slab.oriented_unit_cell,
+                        top,
+                        sep="\n",
+                    )
                     break
         return nonstoich_slabs
 
@@ -418,11 +428,6 @@ class Grain(Structure):
         bulk_repeats: int = 1,
         hkl_spacing: float = None,
     ) -> "Grain":
-        oriented_unit_cell.sort(key=lambda site: site.coords[2])
-        oriented_unit_cell.translate_sites(
-            range(len(oriented_unit_cell)),
-            -oriented_unit_cell.frac_coords[0],
-        )
         grain = cls(
             oriented_unit_cell,
             miller_index,
@@ -535,7 +540,8 @@ class GrainBoundary:
         lattice[2] /= self.grain_1.lattice.c
         lattice[2] *= height / lattice[2, 2]
         translation_vec = self.translation_vec + self.grain_1.scaled_c_vector
-        coords = np.mod(self.grain_2.frac_coords, 1)
+        # THIS NEEDS LOOKING AT, WHERE IS THE PRECISION LOST?
+        coords = np.mod(np.round(self.grain_2.frac_coords, 12), 1)
         coords = self.grain_1.lattice.get_cartesian_coords(coords)
         coords = np.add(coords, translation_vec)
         site_properties = self.grain_1.site_properties
