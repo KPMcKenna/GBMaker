@@ -30,4 +30,4 @@ gb.grain_2.to("poscar", "grain_2.vasp")
 
 # Output the grain boundary
 gb_struct = gb.as_structure()
-gb_struct.get_sorted_structure().to("poscar", "grain_boundary.vasp")
+gb_struct.get_sorted_structure().to("poscar", "310_grain_boundary.vasp")
