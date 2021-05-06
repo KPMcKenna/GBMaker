@@ -104,8 +104,6 @@ class GrainGenerator(SlabGenerator):
             if symmetrize:
                 grain = g[0].symmetrize_surfaces()
                 new_grains.extend(grain)
-                for grain in new_grains:
-                    print(grain, grain.oriented_unit_cell)
             else:
                 new_grains.append(g[0])
 
@@ -407,13 +405,6 @@ class Grain(Structure):
                     slab._thickness_n = 1
                     slab.sort(key=lambda site: site.frac_coords[2])
                     nonstoich_slabs.append(slab)
-                    print("sym")
-                    print(
-                        nonstoich_slabs[0].oriented_unit_cell,
-                        slab.oriented_unit_cell,
-                        top,
-                        sep="\n",
-                    )
                     break
         return nonstoich_slabs
 
