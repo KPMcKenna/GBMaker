@@ -6,7 +6,7 @@ gg = GrainGenerator(bulk, [1, 1, -2])
 grain = gg.get_grains(symmetrize=False)[0]
 
 # Set grain thickness to 5 * the d spacing of the [1, 1, -2] plane, a
-# fractional 0.5 shift in a - b and a symmtric 2.0 spacing between grains.
+# 2.0 Angstrom gap between grains.
 grain.hkl_thickness = 5
 translation_vec = [0.0, 0.0, 0.0]
 translation_vec[2] += 2.0

@@ -7,14 +7,13 @@ grains = gg.get_grains()
 
 grain = grains[0]
 
-# Set grain thickness to 3 * the d spacing of the [1, 1, 1] plane, a
-# fractional 0.5 shift in a - b and a symmtric 2.0 spacing between grains.
+# Set grain thickness to 5 * the d spacing of the [1, 1, 1] plane, a
+# fractional 0.25 shift in the a-vector and a symmtric 2.0 spacing between grains.
 grain.hkl_thickness = 5
 translation_vec = grain.lattice.matrix[0].copy() * 0.25
 translation_vec[2] += 2.0
 
-# Generate the grain boundary with the above settings and mirror the second
-# grain in z.
+# Generate the grain boundary with the above settings
 gb = GrainBoundary(
     grain_1=grain,
     translation_vec=translation_vec,

@@ -12,18 +12,13 @@ view.show()
 
 grain = grains[0]
 
-# Set grain thickness to 3 * the d spacing of the [1, 1, 1] plane, a
-# fractional 0.5 shift in a - b and a symmtric 2.0 spacing between grains.
-grain.hkl_thickness = 3
-translation_vec = [0.0, 0.0, 0.0]
 grain.orthogonalise_c()  # this ensures symmetry between both boundaries for mirrored grains
 
 # Generate the grain boundary with the above settings and mirror the second
-# grain in z.
+# grain in z and merging atoms within 0.2 Angstrom of each other.
 gb = GrainBoundary(
     grain_1=grain,
     mirror_z=True,
-    translation_vec=translation_vec,
     merge_tol=0.2,
 )
 
