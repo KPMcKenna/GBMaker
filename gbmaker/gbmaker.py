@@ -1,11 +1,11 @@
 import numpy as np
 from itertools import product
-from pymatgen.core import Structure, Lattice
+from pymatgen.core import Structure, Lattice, Site
 from pymatgen.core.surface import SlabGenerator
 from pymatgen.core.operations import SymmOp
 from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
 from pymatgen.util.typing import ArrayLike, SpeciesLike
-from typing import Dict, Sequence, List, Any
+from typing import Dict, Sequence, List, Any, Callable
 from pymatgen.analysis.structure_matcher import StructureMatcher
 from functools import reduce
 
@@ -39,7 +39,7 @@ class GrainGenerator(SlabGenerator):
         R = rotation(np.cross(*self.oriented_unit_cell.lattice.matrix[:2]))
         symmop = SymmOp.from_rotation_and_translation(rotation_matrix=R)
         self.oriented_unit_cell.apply_operation(symmop)
-        theta = np.arccos(
+        theta = -np.arccos(
             self.oriented_unit_cell.lattice.matrix[0, 0]
             / self.oriented_unit_cell.lattice.a
         )
@@ -157,9 +157,10 @@ class Grain(Structure):
         self.oriented_unit_cell = oriented_unit_cell
         self.bulk_thickness = self.oriented_unit_cell.lattice.matrix[2, 2]
         self._thickness_n = bulk_repeats
-        self.mirror_x = mirror_x
-        self.mirror_y = mirror_y
-        self.mirror_z = mirror_z
+        self._mirror = np.zeros(3, dtype=bool)
+        self._mirror[0] = mirror_x
+        self._mirror[1] = mirror_y
+        self._mirror[2] = mirror_z
 
     @property
     def thickness(self) -> float:
@@ -226,11 +227,9 @@ class Grain(Structure):
         # convert n to be how many more/less unit cells are required.
         n -= self.bulk_repeats
         self._thickness = self.cart_coords.max(axis=0)[2]
-        self._thickness += n * self.oriented_unit_cell.lattice.matrix[2, 2]
-        self._thickness_n += n
         bulk_c_vector = self.oriented_unit_cell.lattice.matrix[2]
         scaled_c_vector = bulk_c_vector[2] * self.c_vector / self.c_vector[2]
-        thickness = bulk_c_vector * scaled_c_vector[2] / bulk_c_vector[2]
+        thickness = bulk_c_vector * self.thickness / bulk_c_vector[2]
         if n < 0:
             # if the sites are sorted by c then the first |n| lots of bulk cell
             # atoms need to be removed.
@@ -240,7 +239,7 @@ class Grain(Structure):
         elif n > 0:
             mirror_array = np.power([-1, -1, -1], self.mirror_array)
             self.c_vector += n * scaled_c_vector
-            mirror_vector = thickness + bulk_c_vector
+            mirror_vector = thickness + n * bulk_c_vector
             mirror_vector *= float(self.mirror_z) * -mirror_array
             if not self.mirror_z:
                 self.translate_sites(
@@ -260,6 +259,8 @@ class Grain(Structure):
                         coords_are_cartesian=True,
                         properties=site.properties,
                     )
+        self._thickness += n * self.oriented_unit_cell.lattice.matrix[2, 2]
+        self._thickness_n += n
 
     @property
     def c_vector(self) -> np.ndarray:
@@ -283,13 +284,18 @@ class Grain(Structure):
         return (self.thickness / k[2]) * k
 
     @property
+    def scaled_ouc_vector(self) -> np.ndarray:
+        """The thickness of the grain in Angstrom."""
+        k = (
+            self.oriented_unit_cell.lattice.matrix[2].copy()
+            / self.oriented_unit_cell.lattice.c
+        )
+        return (self.thickness / k[2]) * k
+
+    @property
     def mirror_array(self) -> np.ndarray:
         """An array representing if any dirrections have been mirrored."""
-        try:
-            return self.__getattribute__("_mirror")
-        except AttributeError:
-            self._mirror = np.zeros(3, dtype=bool)
-            return self._mirror
+        return self.__getattribute__("_mirror")
 
     @property
     def mirror_x(self) -> bool:
@@ -324,7 +330,7 @@ class Grain(Structure):
     def mirror_z(self, b: bool):
         if b != self.mirror_z:
             self._mirror[2] = b
-            thickness = self.scaled_c_vector * -np.power(
+            thickness = self.scaled_ouc_vector * -np.power(
                 [-1, -1, -1], self.mirror_array
             )
             for site in self._sites:
@@ -388,17 +394,8 @@ class Grain(Structure):
                 if sg.is_laue():
                     if not top:
                         vector = -slab.frac_coords[-1]
-                        vector = slab.lattice.get_cartesian_coords(vector)
-                        slab.translate_sites(
-                            indices=range(len(slab)),
+                        slab.translate_grain(
                             vector=vector,
-                            frac_coords=False,
-                        )
-                        slab.oriented_unit_cell.translate_sites(
-                            indices=range(len(slab.oriented_unit_cell)),
-                            vector=vector,
-                            frac_coords=False,
-                            to_unit_cell=True,
                         )
                     # reset the slab thickness as we have removed atoms,
                     # reducing the bulk thickness.
@@ -407,6 +404,39 @@ class Grain(Structure):
                     nonstoich_slabs.append(slab)
                     break
         return nonstoich_slabs
+
+    def make_supercell(self, scaling_matrix: ArrayLike):
+        ab_scale = [*scaling_matrix[:2], 1]
+        super().make_supercell(ab_scale)
+        self.oriented_unit_cell.make_supercell(ab_scale)
+        if len(scaling_matrix) == 3:
+            self.bulk_repeats *= scaling_matrix[2]
+
+    def translate_grain(
+        self,
+        vector: ArrayLike,
+        frac_coords: bool = True,
+    ):
+        if frac_coords:
+            vector = self.lattice.get_cartesian_coords(vector)
+        vector[2] = -self.cart_coords.min(axis=0)[2]
+        super().translate_sites(range(len(self)), vector, frac_coords=False)
+        self.oriented_unit_cell.translate_sites(
+            range(len(self.oriented_unit_cell)),
+            vector,
+            frac_coords=False,
+            to_unit_cell=True,
+        )
+
+    def reconstruct(self, reconstruction: Callable[["Grain", Site], bool]) -> Structure:
+        recon = self.copy()
+        del_i = []
+        for i, site in enumerate(recon.sites):
+            if not reconstruction(recon, site):
+                del_i.append(i)
+        recon.remove_sites(del_i)
+        recon.translate_grain([0, 0, 0])
+        return recon
 
     @classmethod
     def from_oriented_unit_cell(
@@ -461,7 +491,7 @@ class GrainBoundary:
         self.grain_2.mirror_y = mirror_y
         self.grain_2.mirror_z = mirror_z
         self.translation_vec = np.array(translation_vec)
-        self.vacuum = translation_vec[2] if vacuum is None else vacuum
+        self.vacuum = vacuum
         self.merge_tol = merge_tol
 
     def translate(
@@ -520,12 +550,17 @@ class GrainBoundary:
             self.grain_2.bulk_repeats = n_2
             yield self.as_structure()
 
+    def ab_supercell(self, supercell_dimensions: Sequence[int]):
+        self.grain_1.make_supercell(supercell_dimensions)
+        self.grain_2.make_supercell(supercell_dimensions)
+
     def as_structure(self) -> Structure:
+        vacuum = self.vacuum if self.vacuum is not None else self.translation_vec[2]
         height = (
             self.grain_1.thickness
             + self.grain_2.thickness
             + self.translation_vec[2]
-            + self.vacuum
+            + vacuum
         )
         lattice = self.grain_1.lattice.matrix.copy()
         lattice[2] /= self.grain_1.lattice.c
