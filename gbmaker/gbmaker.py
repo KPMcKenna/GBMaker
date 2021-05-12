@@ -49,6 +49,7 @@ class GrainGenerator(SlabGenerator):
             True,
         )
         self.oriented_unit_cell.apply_operation(symmop)
+        self.oriented_unit_cell = orthogonalise(self.oriented_unit_cell)
 
     def get_grain(self, shift: float = 0.0) -> "Grain":
         oriented_unit_cell = self.oriented_unit_cell.copy()
@@ -592,6 +593,34 @@ class GrainBoundary:
         if self.merge_tol is not None:
             grain_boundary.merge_sites(tol=self.merge_tol, mode="delete")
         return grain_boundary
+
+
+def orthogonalise(s: Structure) -> Structure:
+    """Attempt to orthogonalise the structure.
+
+    Using the fact that a lies on the x axis and b lies in the x-y plane attempt
+    to orthogonalise the lattice by either adding or subtracting integer multiples
+    a from b and then b from c and a from the modified c.
+    """
+    l = s.lattice.matrix.copy()
+    a1 = l[0, 0]
+    b1, b2 = l[1, 0:2]
+    c1, c2, c3 = l[2]
+    b1 += round(-b1 / a1) * a1
+    n = round(-c2 / b2)
+    c1 += n * b1
+    c2 += n * b2
+    c1 += round(-c1 / a1) * a1
+    lattice = [[a1, 0, 0], [b1, b2, 0], [c1, c2, c3]]
+    return Structure(
+        lattice,
+        s.species,
+        s.cart_coords.tolist(),
+        s.charge,
+        to_unit_cell=True,
+        coords_are_cartesian=True,
+        site_properties=s.site_properties,
+    )
 
 
 def rotation(vector: ArrayLike, axis: ArrayLike = [0, 0, 1]) -> np.ndarray:

@@ -1,10 +1,10 @@
 import numpy as np
-from gbmaker import Grain, GrainBoundary
+from gbmaker import Grain, GrainGenerator, GrainBoundary
 from pymatgen.core import Structure, Site
 
 # Read grain from an oriented unit cell
-ouc = Structure.from_file(filename="./POSCAR-112")
-grain_1 = Grain.from_oriented_unit_cell(ouc, [1, 1, -2])
+bulk = Structure.from_file(filename="./POSCAR-bulk")
+grain_1 = GrainGenerator(bulk, [1, 1, -2]).get_grains()[0]
 
 # orthogonalise the grain and make a mirrored copy, translated so that there is
 # an atom at (0, 0, 0)
