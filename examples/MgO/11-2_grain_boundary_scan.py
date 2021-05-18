@@ -8,22 +8,17 @@ grain = gg.get_grains(symmetrize=False)[0]
 # Set grain thickness to 5 * the d spacing of the [1, 1, -2] plane, a
 # 2.0 Angstrom gap between grains.
 grain.hkl_thickness = 5
-translation_vec = [0.0, 0.0, 0.0]
-translation_vec[2] += 2.0
+translation_vec = [0.0, 0.0, 2.0]
 grain.orthogonalise_c()  # this ensures symmetry between both boundaries for mirrored grains
 
 # Generate the grain boundary with the above settings and mirror the second
 # grain in z.
 gb = GrainBoundary(
-    grain_1=grain,
+    grain_0=grain,
     mirror_z=True,
     translation_vec=translation_vec,
 )
 
-# Output the two slabs
-gb.grain_1.to("poscar", "grain_1.vasp")
-gb.grain_1.oriented_unit_cell.to("poscar", "unit_cell.vasp")
-gb.grain_2.to("poscar", "grain_2.vasp")
 
 # Scan the grain boundary
 for grain_boundary in gb.scan(na=5, nb=5):

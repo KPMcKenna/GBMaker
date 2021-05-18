@@ -16,14 +16,13 @@ view.show()
 
 # orthogonalise the c-vector so that each boundary is symmetric
 grains[0].orthogonalise_c()
+grains[0].hkl_thickness = 3.5
 
 # seperate the grains by 2 Angstrom
 translation_vec = [0.0, 0.0, 2.0]
 
 # create a domain wall
-gb = GrainBoundary(grain_1=grains[0], mirror_y=True, translation_vec=translation_vec)
-gb.grain_1.hkl_thickness = 3.5
-gb.grain_2.hkl_thickness = 3.5
-gb.as_structure().get_sorted_structure().to("poscar", "011_domain_wall.vasp")
-gb.grain_1.to("poscar", "./grain_0.vasp")
-gb.grain_2.to("poscar", "./grain_1.vasp")
+gb = GrainBoundary(grain_0=grains[0], mirror_y=True, translation_vec=translation_vec)
+gb.get_sorted_structure().to("poscar", "011_domain_wall.vasp")
+gb.grain_0.get_sorted_structure().to("poscar", "./grain_0.vasp")
+gb.grain_1.get_sorted_structure().to("poscar", "./grain_1.vasp")

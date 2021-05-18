@@ -10,20 +10,14 @@ grain = grains[0]
 # Set grain thickness to 5 * the d spacing of the [1, 1, 1] plane, a
 # fractional 0.25 shift in the a-vector and a symmtric 2.0 spacing between grains.
 grain.hkl_thickness = 5
-translation_vec = grain.lattice.matrix[0].copy() * 0.25
-translation_vec[2] += 2.0
 
 # Generate the grain boundary with the above settings
-gb = GrainBoundary(
-    grain_1=grain,
-    translation_vec=translation_vec,
-)
-
-# Output the two slabs
-gb.grain_1.to("poscar", "grain_1.vasp")
-gb.grain_1.oriented_unit_cell.to("poscar", "unit_cell.vasp")
-gb.grain_2.to("poscar", "grain_2.vasp")
+gb = GrainBoundary(grain)
+# shift the second grain relative to the lattice basis
+gb.ab_translation_vec = [0.25, 0, 0]
+gb.translation_vec += (
+    2.0 / gb.grain_0.lattice.matrix[2, 2]
+) * gb.grain_0.lattice.matrix[2]
 
 # Output the grain boundary
-gb_struct = gb.as_structure()
-gb_struct.get_sorted_structure().to("poscar", "111_stacking_fault.vasp")
+gb.get_sorted_structure().to("poscar", "111_stacking_fault.vasp")
