@@ -17,7 +17,6 @@ class GrainGenerator(SlabGenerator):
     TODO:
       * Tidy up implementation: slab -> grain, np.ndarray -> ArrayLike, etc
       * Add more comments to explain ideas behind methods.
-      * Docstring the functions
     """
 
     def __init__(
@@ -25,21 +24,33 @@ class GrainGenerator(SlabGenerator):
         bulk_cell: Structure,
         miller_index: ArrayLike,
     ):
+        """Initialise the GrainGenerator class from any bulk structure.
+
+        The Grain is created with miller index relative to the conventional
+        standard structure returned by pymatgen.symmetry.analyzer.SpacegroupAnalyzer.
+        This class creates the oriented unit cell from a primitive cell so that the
+        returned cell is fairly primitive. Attempts are made to orthogonalise
+        the cell without increasing the number of atoms in the oriented unit cell.
+        """
         sg = SpacegroupAnalyzer(bulk_cell)
         unit_cell = sg.get_conventional_standard_structure()
         primitive_cell = sg.get_primitive_standard_structure()
         T = sg.get_conventional_to_primitive_transformation_matrix()
+        # calculate the miller index relative to the primitive cell
         primative_miller_index = np.dot(T, miller_index)
         primative_miller_index /= reduce(float_gcd, primative_miller_index)
         primative_miller_index = np.array(
             np.round(primative_miller_index, 1), dtype=int
         )
         super().__init__(primitive_cell, primative_miller_index, None, None)
+        # use the conventional standard structure and the supplied miller index
         self.parent = unit_cell
         self.miller_index = np.array(miller_index)
+        # first rotate the oriented unit cell so that the miller index is along z
         R = rotation(np.cross(*self.oriented_unit_cell.lattice.matrix[:2]))
         symmop = SymmOp.from_rotation_and_translation(rotation_matrix=R)
         self.oriented_unit_cell.apply_operation(symmop)
+        # then rotate the oriented unit cell so that the a-vector lies along x
         theta = np.arccos(
             self.oriented_unit_cell.lattice.matrix[0, 0]
             / self.oriented_unit_cell.lattice.a
@@ -51,14 +62,20 @@ class GrainGenerator(SlabGenerator):
             True,
         )
         self.oriented_unit_cell.apply_operation(symmop)
+        # try and orthogonalise the structure
         self.oriented_unit_cell = orthogonalise(self.oriented_unit_cell)
 
     def get_grain(self, shift: float = 0.0) -> "Grain":
+        """From a given fractional shift in c in the oriented unit cell create a Grain.
+
+        Despite the documentation in pymatgen sugguesting this shift is in Angstrom
+        the shift is fractional (Pull request to change this?).
+        """
         return Grain.from_oriented_unit_cell(
             self.oriented_unit_cell.copy(),
             self.miller_index.copy(),
             shift,
-            hkl_spacing=self.parent.lattice.d_hkl(self.miller_index.copy()),
+            hkl_spacing=self.parent.lattice.d_hkl(self.miller_index),
         )
 
     def get_grains(
@@ -69,7 +86,16 @@ class GrainGenerator(SlabGenerator):
         max_broken_bonds: int = 0,
         symmetrize: bool = False,
         repair: bool = False,
-    ):
+    ) -> Iterator["Grain"]:
+        """Get the differing terminations of Grains for the oriented unit cell.
+
+        This is the same method as get_slabs() but yeilding Grains instead of
+        returning slabs.
+
+        --Warning--
+        This currently works as the structure matcher doesn't periodically wrap
+        if this changes switch the __iter__() method of Grains to return a Slab.
+        """
         c_ranges = set() if bonds is None else self._get_c_ranges(bonds)
 
         grains = []
@@ -82,9 +108,8 @@ class GrainGenerator(SlabGenerator):
             if bonds_broken <= max_broken_bonds:
                 grains.append(grain)
             elif repair:
-                # If the number of broken bonds is exceeded,
-                # we repair the broken bonds on the slab
-                grains.append(self.repair_broken_bonds(grain, bonds))
+                grain.bonds = bonds
+                grains.append(grain)
 
         # Further filters out any surfaces made that might be the same
         m = StructureMatcher(ltol=tol, stol=tol, primitive_cell=False, scale=False)
@@ -93,7 +118,8 @@ class GrainGenerator(SlabGenerator):
         for g in m.group_structures(grains):
             g = self.get_grain(g[0].shift[2])
             # For each unique termination, symmetrize the
-            # surfaces by removing sites from the bottom.
+            # surfaces by removing sites from the top.
+            # The repeat will be caught by the other termination.
             if symmetrize:
                 grain = g.symmetrize_surfaces()
                 if grain is not None:
@@ -103,10 +129,13 @@ class GrainGenerator(SlabGenerator):
 
         match = StructureMatcher(ltol=tol, stol=tol, primitive_cell=False, scale=False)
         new_grains = [g[0] for g in match.group_structures(new_grains)]
-        return new_grains
+        for grain in new_grains:
+            yield grain
 
 
 class GrainBoundaryGenerator:
+    """A class for generating GrainBoundary classes."""
+
     def __init__(
         self,
         bulk_0: Structure,
@@ -114,6 +143,15 @@ class GrainBoundaryGenerator:
         bulk_1: Optional[Structure] = None,
         miller_1: Optional[ArrayLike] = None,
     ):
+        """Initialise the generator with either one or two bulk structures.
+
+        If a second bulk structure or second miller index is supplied then the
+        second grain will be made of this different grain.
+
+        TODO:
+          - Moire lattice matching.
+          - Rotation.
+        """
         self.bulk_0 = bulk_0
         self.miller_0 = miller_0
         self.bulk_1 = bulk_1
@@ -134,7 +172,12 @@ class GrainBoundaryGenerator:
         max_broken_bonds: int = 0,
         symmetrize: bool = False,
         repair: bool = False,
-    ) -> List["GrainBoundary"]:
+    ) -> Iterator["GrainBoundary"]:
+        """Generate an iterator of GrainBoundaries over possible grain terminations.
+
+        Using the arguements available to the GrainGenerator and GrainBoundary
+        classes create an iterator over the available grains.
+        """
         grains_0 = GrainGenerator(self.bulk_0, self.miller_0).get_grains(
             bonds, ftol, tol, max_broken_bonds, symmetrize, repair
         )
@@ -196,6 +239,7 @@ class Grain:
         mirror_y: bool = False,
         mirror_z: bool = False,
         hkl_spacing: Optional[float] = None,
+        bonds: Optional[Dict[Sequence[SpeciesLike], float]] = None,
     ):
         """Initialise the grain from an oriented unit cell and Structure kwargs.
 
@@ -232,6 +276,7 @@ class Grain:
         self.mirror_y = mirror_y
         self.mirror_z = mirror_z
         self._translation_vec = np.zeros(3, dtype=float)
+        self.bonds = bonds
 
     def __len__(self) -> int:
         ouc_len = (
@@ -520,6 +565,39 @@ class Grain:
                 if not reconstruction(self, site):
                     del_i.append(i)
             struct.remove_sites(del_i)
+        if self.bonds is not None:
+            lattice = self.lattice.matrix.copy()
+            lattice[2] *= (lattice[2, 2] + 5.0) / lattice[2, 2]
+            slab = Slab(
+                Lattice(lattice),
+                struct.species_and_occu,
+                struct.cart_coords,
+                self.miller_index.copy(),
+                self.oriented_unit_cell.copy(),
+                self.shift[2],
+                [1, 1, 1],
+                False,
+                coords_are_cartesian=True,
+                site_properties=struct.site_properties,
+            )
+            gg = GrainGenerator(
+                self.oriented_unit_cell.copy(), self.miller_index.copy()
+            )
+            slab = gg.repair_broken_bonds(slab, self.bonds)
+            struct = Structure(
+                struct.lattice,
+                slab.species_and_occu,
+                slab.cart_coords,
+                slab.charge,
+                to_unit_cell=False,
+                coords_are_cartesian=True,
+                site_properties=slab.site_properties,
+            )
+            struct.translate_sites(
+                range(len(struct)),
+                [0, 0, -1 * struct.frac_coords.min(axis=0)[2]],
+                to_unit_cell=False,
+            )
         return struct
 
     def get_sorted_structure(
