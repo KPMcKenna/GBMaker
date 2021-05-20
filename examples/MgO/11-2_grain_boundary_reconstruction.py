@@ -3,11 +3,12 @@ from pymatgen.core import Structure, Site
 
 # Read grain from an oriented unit cell
 bulk = Structure.from_file(filename="./POSCAR-bulk")
-grain = GrainGenerator(bulk, [1, 1, -2]).get_grains()[0]
+grain = next(GrainGenerator(bulk, [1, 1, -2]).get_grains())
 
 # orthogonalise the grain and make a mirrored copy, translated so that there is
 # an atom at (0, 0, 0)
-grain.orthogonalise_c()  # this ensures symmetry between both boundaries for mirrored grains
+# this ensures symmetry between both boundaries for mirrored grains
+grain.orthogonal_c = True
 
 # Define the reconstruction function
 def reconstruction(gb: Grain, site: Site) -> bool:

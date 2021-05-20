@@ -5,7 +5,7 @@ bulk = Structure.from_file(filename="./POSCAR-bulk")
 gg = GrainGenerator(bulk, [1, 1, 1])
 grains = gg.get_grains()
 
-grain = grains[0]
+grain = next(grains)
 
 # Set grain thickness to 5 * the d spacing of the [1, 1, 1] plane, a
 # fractional 0.25 shift in the a-vector and a symmtric 2.0 spacing between grains.

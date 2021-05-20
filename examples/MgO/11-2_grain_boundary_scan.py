@@ -3,13 +3,14 @@ from pymatgen.core import Structure
 
 bulk = Structure.from_file(filename="./POSCAR-bulk")
 gg = GrainGenerator(bulk, [1, 1, -2])
-grain = gg.get_grains(symmetrize=False)[0]
+grain = next(gg.get_grains(symmetrize=False))
 
 # Set grain thickness to 5 * the d spacing of the [1, 1, -2] plane, a
 # 2.0 Angstrom gap between grains.
 grain.hkl_thickness = 5
 translation_vec = [0.0, 0.0, 2.0]
-grain.orthogonalise_c()  # this ensures symmetry between both boundaries for mirrored grains
+# this ensures symmetry between both boundaries for mirrored grains
+grain.orthogonal_c = True
 
 # Generate the grain boundary with the above settings and mirror the second
 # grain in z.
