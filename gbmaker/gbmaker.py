@@ -111,25 +111,16 @@ class GrainGenerator(SlabGenerator):
                 grain.bonds = bonds
                 grains.append(grain)
 
-        # Further filters out any surfaces made that might be the same
-        m = StructureMatcher(ltol=tol, stol=tol, primitive_cell=False, scale=False)
-
-        new_grains = []
-        for g in m.group_structures(grains):
-            g = self.get_grain(g[0].shift[2])
-            # For each unique termination, symmetrize the
-            # surfaces by removing sites from the top.
-            # The repeat will be caught by the other termination.
-            if symmetrize:
-                grain = g.symmetrize_surfaces()
-                if grain is not None:
-                    new_grains.append(grain)
+        if symmetrize:
+            if repair:
+                grains = [g for g in grains if g.get_slab().is_symmetric()]
             else:
-                new_grains.append(g)
+                grains = filter(
+                    lambda g: g is not None, [g.symmetrize_surfaces() for g in grains]
+                )
 
         match = StructureMatcher(ltol=tol, stol=tol, primitive_cell=False, scale=False)
-        new_grains = [g[0] for g in match.group_structures(new_grains)]
-        for grain in new_grains:
+        for grain, *_ in match.group_structures([g for g in grains]):
             yield grain
 
 
@@ -220,6 +211,18 @@ class GrainBoundaryGenerator:
         for gb in gb_map:
             yield gb
 
+    @classmethod
+    def from_file(
+        cls,
+        filename_0: str,
+        miller_0: ArrayLike,
+        filename_1: Optional[str] = None,
+        miller_1: Optional[ArrayLike] = None,
+    ) -> "GrainBoundaryGenerator":
+        bulk_0 = Structure.from_file(filename_0)
+        bulk_1 = None if filename_1 is None else Structure.from_file(filename_1)
+        return cls(bulk_0, miller_0, bulk_1, miller_1)
+
 
 class Grain:
     """A grain class the builds upon a pymatgen Structure.
@@ -240,6 +243,7 @@ class Grain:
         mirror_z: bool = False,
         hkl_spacing: Optional[float] = None,
         bonds: Optional[Dict[Sequence[SpeciesLike], float]] = None,
+        orthogonal_c: bool = False,
     ):
         """Initialise the grain from an oriented unit cell and Structure kwargs.
 
@@ -276,6 +280,7 @@ class Grain:
         self.mirror_y = mirror_y
         self.mirror_z = mirror_z
         self._translation_vec = np.zeros(3, dtype=float)
+        self.orthogonal_c = orthogonal_c
         self.bonds = bonds
 
     def __len__(self) -> int:
@@ -289,11 +294,13 @@ class Grain:
 
     @property
     def lattice(self) -> Lattice:
+        h = (self.bulk_repeats - 1) * self.oriented_unit_cell.lattice.matrix[2, 2]
+        h += self.base.cart_coords.max(axis=0)[2]
         lattice = self.base.lattice.matrix.copy()
         lattice[0] *= self.ab_scale[0]
         lattice[1] *= self.ab_scale[1]
         lattice[2] /= lattice[2, 2]
-        lattice[2] *= self.thickness
+        lattice[2] *= h
         return Lattice(lattice)
 
     @property
@@ -315,6 +322,10 @@ class Grain:
     def __iter__(self) -> Iterator[PeriodicSite]:
         mirror = np.power([-1, -1, -1], self._mirror)
         z_shift = int(self.mirror_z) * self.lattice.matrix[2] * -1 * mirror
+        lattice = self.lattice.matrix.copy()
+        lattice[2] *= (lattice[2, 2] + 5) / lattice[2, 2]
+        lattice = Lattice(lattice)
+        sites = []
         try:
             ouc = self.oriented_unit_cell * [*self.ab_scale, self.bulk_repeats - 1]
             ouc.translate_sites(
@@ -329,13 +340,14 @@ class Grain:
                 c = ouc.lattice.get_cartesian_coords(c)
                 c *= mirror
                 c += z_shift
-                c = np.round(self.lattice.get_fractional_coords(c), 8)
-                yield PeriodicSite(
-                    site.species,
-                    c,
-                    self.lattice,
-                    to_unit_cell=False,
-                    properties=site.properties,
+                c = np.round(lattice.get_fractional_coords(c), 8)
+                sites.append(
+                    PeriodicSite(
+                        site.species,
+                        c,
+                        lattice,
+                        properties=site.properties,
+                    )
                 )
         except np.linalg.LinAlgError:
             ouc_c = np.zeros(3)
@@ -351,23 +363,54 @@ class Grain:
             c = c + ouc_c
             c *= mirror
             c += int(self.mirror_z) * self.lattice.matrix[2] * -1 * mirror
-            c = np.round(self.lattice.get_fractional_coords(c), 8)
-            yield PeriodicSite(
-                site.species,
-                c,
-                self.lattice,
-                to_unit_cell=False,
-                properties=site.properties,
+            c = np.round(lattice.get_fractional_coords(c), 8)
+            sites.append(
+                PeriodicSite(
+                    site.species,
+                    c,
+                    lattice,
+                    properties=site.properties,
+                )
             )
+        struct = self.repair_broken_bonds(Structure.from_sites(sites, self.charge))
+        lattice = struct.lattice.matrix.copy()
+        if self.orthogonal_c:
+            lattice[2, :2] = 0
+        struct = Structure(
+            lattice,
+            struct.species_and_occu,
+            struct.cart_coords,
+            self.charge,
+            to_unit_cell=False,
+            coords_are_cartesian=True,
+            site_properties=struct.site_properties,
+        )
+        for s in struct:
+            yield s
 
     def __getitem__(self, ind: int) -> PeriodicSite:
         return self.sites[ind]
 
     @property
+    def bonds(self) -> Optional[Dict[Sequence[SpeciesLike], float]]:
+        return self._bonds
+
+    @bonds.setter
+    def bonds(self, bonds: Optional[Dict[Sequence[SpeciesLike], float]]):
+        self._bonds = bonds
+        self._base_thickness = self.repair_broken_bonds(
+            self.get_structure()
+        ).cart_coords.max(axis=0)[2] - self.bulk_thickness * (self.bulk_repeats - 1)
+
+    @property
+    def base_thickness(self) -> float:
+        return self._base_thickness
+
+    @property
     def thickness(self) -> float:
         """The thickness of the grain in Angstrom."""
-        b = (self.bulk_repeats - 1) * self.oriented_unit_cell.lattice.matrix[2, 2]
-        return self.base.cart_coords.max(axis=0)[2] + b
+        bulk = (self.bulk_repeats - 1) * self.bulk_thickness
+        return self.base_thickness + bulk
 
     @thickness.setter
     def thickness(self, thickness: float):
@@ -461,19 +504,19 @@ class Grain:
             self.mirror_y,
             self.mirror_z,
             self.hkl_spacing,
+            self.bonds,
+            self.orthogonal_c,
         )
         grain.bulk_repeats = self.bulk_repeats
         return grain
 
-    def orthogonalise_c(self):
-        lattice = self.base.lattice.matrix.copy()
-        lattice[2, :2] = 0
-        lattice = Lattice(lattice)
-        coords = self.base.cart_coords
-        self.base._lattice = lattice
-        for c, site in zip(coords, self.base._sites):
-            site._lattice = lattice
-            site.coords = c
+    @property
+    def orthogonal_c(self) -> bool:
+        return self._orth_c
+
+    @orthogonal_c.setter
+    def orthogonal_c(self, b: bool):
+        self._orth_c = b
 
     def symmetrize_surfaces(self, tol: float = 1e-3) -> Optional["Grain"]:
         """Attempt to symmetrize both surfaces of the grain.
@@ -483,13 +526,10 @@ class Grain:
         Much of the code is lifted from that with comments where it has been
         changed.
         """
-        sg = SpacegroupAnalyzer(self.base, symprec=tol)
-        if sg.is_laue():
+        slab = self.get_slab(bulk_repeats=2)
+        if slab.is_symmetric():
             return self.copy()
-        br = self.bulk_repeats
-        self.bulk_repeats = 2
 
-        slab = self.get_slab()
         # set the bulk thickness to 2 this means that
         slab.sort(key=lambda site: (site.z, site.bulk_equivalent))
         # maybe add energy at some point
@@ -502,8 +542,7 @@ class Grain:
             # NUMBER OF ATOMS IN THE ORIENTED UNIT CELL.
             slab.remove_sites([len(slab) - 1])
             # Check if the altered surface is symmetric
-            sg = SpacegroupAnalyzer(slab, symprec=tol)
-            if sg.is_laue():
+            if slab.is_symmetric():
                 # reset the slab thickness as we have removed atoms,
                 # reducing the bulk thickness.
                 slab.sort(key=lambda site: (round(site.z, 8), site.bulk_equivalent))
@@ -516,9 +555,10 @@ class Grain:
                     self.mirror_y,
                     self.mirror_z,
                     self.hkl_spacing,
+                    self.bonds,
+                    self.orthogonal_c,
                 )
                 break
-        self.bulk_repeats = br
         return grain
 
     def make_supercell(self, scaling_matrix: ArrayLike):
@@ -543,6 +583,8 @@ class Grain:
         vector = np.array(vector)
         if len(vector) == 2:
             vector = np.append(vector, 0)
+        else:
+            vector[2] = 0
         vector = self.base.lattice.get_cartesian_coords(vector)
         self._translation_vec[:2] = vector[:2]
 
@@ -565,39 +607,6 @@ class Grain:
                 if not reconstruction(self, site):
                     del_i.append(i)
             struct.remove_sites(del_i)
-        if self.bonds is not None:
-            lattice = self.lattice.matrix.copy()
-            lattice[2] *= (lattice[2, 2] + 5.0) / lattice[2, 2]
-            slab = Slab(
-                Lattice(lattice),
-                struct.species_and_occu,
-                struct.cart_coords,
-                self.miller_index.copy(),
-                self.oriented_unit_cell.copy(),
-                self.shift[2],
-                [1, 1, 1],
-                False,
-                coords_are_cartesian=True,
-                site_properties=struct.site_properties,
-            )
-            gg = GrainGenerator(
-                self.oriented_unit_cell.copy(), self.miller_index.copy()
-            )
-            slab = gg.repair_broken_bonds(slab, self.bonds)
-            struct = Structure(
-                struct.lattice,
-                slab.species_and_occu,
-                slab.cart_coords,
-                slab.charge,
-                to_unit_cell=False,
-                coords_are_cartesian=True,
-                site_properties=slab.site_properties,
-            )
-            struct.translate_sites(
-                range(len(struct)),
-                [0, 0, -1 * struct.frac_coords.min(axis=0)[2]],
-                to_unit_cell=False,
-            )
         return struct
 
     def get_sorted_structure(
@@ -616,12 +625,12 @@ class Grain:
         reconstruction: Optional[Callable[["Grain", Site], bool]] = None,
         sort_key: Optional[Callable[[Site], Any]] = None,
     ) -> Slab:
-        lattice = self.lattice.matrix.copy()
-        lattice[2] *= (lattice[2, 2] + 5.0) / lattice[2, 2]
         br = self.bulk_repeats
         if bulk_repeats is not None:
             self.bulk_repeats = bulk_repeats
         slab = self.get_structure(reconstruction, sort_key)
+        lattice = slab.lattice.matrix.copy()
+        lattice[2] *= (lattice[2, 2] + 5.0) / lattice[2, 2]
         self.bulk_repeats = br
         return Slab(
             Lattice(lattice),
@@ -646,6 +655,8 @@ class Grain:
         mirror_y: bool = False,
         mirror_z: bool = False,
         hkl_spacing: Optional[float] = None,
+        bonds: Optional[Dict[Sequence[SpeciesLike], float]] = None,
+        orthogonal_c: bool = False,
     ) -> "Grain":
         base, origin_shift = cls.base_from_oriented_unit_cell(oriented_unit_cell, shift)
         grain = cls(
@@ -657,8 +668,107 @@ class Grain:
             mirror_y,
             mirror_z,
             hkl_spacing,
+            bonds,
+            orthogonal_c,
         )
         return grain
+
+    def repair_broken_bonds(self, struct: Structure) -> Structure:
+        if self.bonds is None:
+            return struct
+        else:
+            struct = Structure.from_sites(struct)
+        for pair in self.bonds.keys():
+            blength = self.bonds[pair]
+
+            # First lets determine which element should be the
+            # reference (center element) to determine broken bonds.
+            # e.g. P for a PO4 bond. Find integer coordination
+            # numbers of the pair of elements wrt to each other
+            cn_dict = {}
+            for i, el in enumerate(pair):
+                cnlist = set()
+                for site in self.oriented_unit_cell:
+                    poly_coord = 0
+                    if site.species_string == el:
+                        for nn in self.oriented_unit_cell.get_neighbors(site, blength):
+                            if nn[0].species_string == pair[i - 1]:
+                                poly_coord += 1
+                        cnlist.add(poly_coord)
+                cn_dict[el] = cnlist
+
+            # We make the element with the higher coordination our reference
+            if max(cn_dict[pair[0]]) > max(cn_dict[pair[1]]):
+                element1, element2 = pair
+            else:
+                element2, element1 = pair
+
+            for i, site in enumerate(struct):
+                # Determine the coordination of our reference
+                if site.species_string == element1:
+                    poly_coord = 0
+                    for neighbor in struct.get_neighbors(site, blength):
+                        poly_coord += 1 if neighbor.species_string == element2 else 0
+
+                    # suppose we find an undercoordinated reference atom
+                    if poly_coord not in cn_dict[element1]:
+                        # We get the reference atom of the broken bonds
+                        # (undercoordinated), move it to the other surface
+                        struct = self.move_to_other_side(struct, [i])
+
+                        # find its NNs with the corresponding
+                        # species it should be coordinated with
+                        neighbors = struct.get_neighbors(
+                            struct[i], blength, include_index=True
+                        )
+                        tomove = [
+                            nn[2]
+                            for nn in neighbors
+                            if nn[0].species_string == element2
+                        ]
+                        tomove.append(i)
+                        # and then move those NNs along with the central
+                        # atom back to the other side of the slab again
+                        struct = self.move_to_other_side(struct, tomove)
+        struct.translate_sites(
+            range(len(struct)),
+            [0, 0, -struct.frac_coords.min(axis=0)[2]],
+            to_unit_cell=False,
+        )
+        return struct
+
+    def move_to_other_side(
+        self,
+        init_struct: Structure,
+        index: ArrayLike,
+    ) -> Structure:
+        struct = init_struct.copy()
+        index = np.unique(index)
+        weights = [s.species.weight for s in struct]
+        com = np.average(struct.frac_coords, weights=weights, axis=0)
+
+        # Sort the index of sites based on which side they are on
+        top_site_index = [i for i in index if struct[i].frac_coords[2] > com[2]]
+        bottom_site_index = [i for i in index if struct[i].frac_coords[2] < com[2]]
+
+        s = self.lattice.matrix[2].copy()
+        s *= np.power([-1, -1, -1], self._mirror + 1) if self.mirror_z else 1
+        s *= np.ceil(s[2] / self.bulk_thickness) * self.bulk_thickness / s[2]
+
+        # Translate sites to the opposite surfaces
+        struct.translate_sites(
+            top_site_index,
+            -s,
+            frac_coords=False,
+            to_unit_cell=False,
+        )
+        struct.translate_sites(
+            bottom_site_index,
+            s,
+            frac_coords=False,
+            to_unit_cell=False,
+        )
+        return struct
 
     @staticmethod
     def base_from_oriented_unit_cell(
@@ -763,8 +873,8 @@ class GrainBoundary:
         self._translation_vec = np.array([*self.grain_1.translation_vec[:2], v[2]])
 
     def orthogonalise_c(self):
-        self.grain_0.orthogonalise_c()
-        self.grain_1.orthogonalise_c()
+        self.grain_0.orthogonal_c = True
+        self.grain_1.orthogonal_c = True
 
     def scan(
         self,
@@ -821,6 +931,8 @@ class GrainBoundary:
         self,
         sort_key: Optional[Callable[[Site], Any]] = None,
     ) -> Structure:
+        grain_0 = self.grain_0.get_structure(reconstruction=self.reconstruction)
+        grain_1 = self.grain_1.get_structure(reconstruction=self.reconstruction)
         vacuum = self.vacuum if self.vacuum is not None else self.translation_vec[2]
         height = (
             self.grain_0.thickness
@@ -828,13 +940,11 @@ class GrainBoundary:
             + self.translation_vec[2]
             + vacuum
         )
-        lattice = self.grain_0.lattice.matrix.copy()
-        lattice[2] /= self.grain_0.lattice.c
+        lattice = grain_0.lattice.matrix.copy()
+        lattice[2] /= grain_0.lattice.c
         lattice[2] *= height / lattice[2, 2]
-        translation_vec = self.grain_0.lattice.matrix[2].copy()
+        translation_vec = lattice[2] * self.grain_0.thickness / lattice[2, 2]
         translation_vec[2] += self.translation_vec[2]
-        grain_0 = self.grain_0.get_structure(reconstruction=self.reconstruction)
-        grain_1 = self.grain_1.get_structure(reconstruction=self.reconstruction)
         # THIS NEEDS LOOKING AT, WHERE IS THE PRECISION LOST?
         coords = grain_0.lattice.get_cartesian_coords(grain_1.frac_coords)
         coords[:, 2] = grain_1.cart_coords[:, 2]
@@ -887,6 +997,22 @@ class GrainBoundary:
             self.merge_tol,
             self.reconstruction,
         )
+
+
+def orthogonalise_c(s: Structure) -> Structure:
+    """Force the orthogonalisation of the c-vector"""
+    lattice = s.lattice.matrix.copy()
+    lattice[2, :2] = 0
+    return Structure(
+        lattice,
+        s.species_and_occu,
+        s.cart_coords,
+        s.charge,
+        False,
+        False,
+        True,
+        s.site_properties,
+    )
 
 
 def orthogonalise(s: Structure) -> Structure:
