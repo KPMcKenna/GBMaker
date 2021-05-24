@@ -15,4 +15,4 @@ for gb in gbg.get_grain_boundaries(
     gb.grain_0.hkl_thickness = 3
     gb.grain_1.hkl_thickness = 3
     gb.ab_translation_vec = [0, 0]
-    gb.get_sorted_structure().to("poscar", f"011_grain_boundry.vasp")
+    gb.get_sorted_structure().to("poscar", f"011_grain_boundary.vasp")
