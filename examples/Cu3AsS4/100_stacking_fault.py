@@ -6,15 +6,17 @@ gg = GrainGenerator(bulk, [1, 0, 0])
 grains = list(gg.get_grains())
 
 grain = grains[0]
+print(grain.hkl_spacing)
 
 # Set grain thickness to 5 * the d spacing of the [1, 1, 1] plane, a
 # fractional 0.25 shift in the a-vector and a symmtric 2.0 spacing between grains.
 grain.hkl_thickness = 3
+print(grain.thickness)
 
 # Generate the grain boundary with the above settings
 gb = GrainBoundary(grain)
 # shift the second grain relative to the lattice basis
-gb.ab_translation_vec = [0.0, 0.5, 0]
+gb.fractional_translation_vec = [0.0, 0.5, 0]
 gb.translation_vec += (
     2.0 / gb.grain_0.lattice.matrix[2, 2]
 ) * gb.grain_0.lattice.matrix[2]

@@ -1,7 +1,7 @@
 import numpy as np
+import warnings
 from itertools import product
 from functools import reduce
-from logging import warning
 from pymatgen.core import Structure, Lattice, Site, PeriodicSite, IStructure
 from pymatgen.core.surface import SlabGenerator, Slab
 from pymatgen.core.operations import SymmOp
@@ -35,7 +35,7 @@ class GrainGenerator(SlabGenerator):
         sg = SpacegroupAnalyzer(bulk_cell)
         unit_cell = sg.get_conventional_standard_structure()
         if unit_cell != bulk_cell:
-            warning.warn(f"Non-conventional unit cell supplied, using:\n{unit_cell}")
+            warnings.warn(f"Non-conventional unit cell supplied, using:\n{unit_cell}")
         primitive_cell = sg.get_primitive_standard_structure()
         T = sg.get_conventional_to_primitive_transformation_matrix()
         # calculate the miller index relative to the primitive cell
@@ -289,7 +289,7 @@ class Grain:
         if b:
             self.can_symmetrize_surfaces(True)
             if not self._symmetrize:
-                warning.warn("Cannot symmetrize surface.")
+                warnings.warn("Cannot symmetrize surface.")
         # if trying to set false delete the attribute '_symmetrize' if it exists.
         elif self.symmetrize:
             self.__delattr__("_symmetrize")
@@ -398,7 +398,7 @@ class Grain:
             if self.symmetrize:
                 return
             else:
-                warning.warn("Can no longer symmetrize surfaces.")
+                warnings.warn("Can no longer symmetrize surfaces.")
         # calculate the extra thicknes this repairing adds to the Grain.
         self._extra_thickness = (
             self.get_structure().cart_coords.max(axis=0)[2]
