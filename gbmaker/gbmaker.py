@@ -110,6 +110,19 @@ class GrainBoundaryGenerator:
         miller_0: ArrayLike,
         bulk_1: Optional[Structure] = None,
         miller_1: Optional[ArrayLike] = None,
+        mirror_x: bool = False,
+        mirror_y: bool = False,
+        mirror_z: bool = False,
+        vacuum: Optional[float] = None,
+        translation_vec: ArrayLike = [0.0, 0.0, 0.0],
+        merge_tol: Optional[float] = None,
+        reconstruction: Optional[Callable[["Grain", Site], bool]] = None,
+        bonds: Optional[Dict[Sequence[SpeciesLike], float]] = None,
+        ftol: float = 0.1,
+        tol: float = 0.1,
+        max_broken_bonds: int = 0,
+        symmetrize: bool = False,
+        repair: bool = False,
     ):
         """Initialise the generator with either one or two bulk structures.
 
@@ -124,9 +137,88 @@ class GrainBoundaryGenerator:
         self.miller_0 = miller_0
         self.bulk_1 = bulk_1
         self.miller_1 = miller_1
+        self.mirror_x = mirror_x
+        self.mirror_y = mirror_y
+        self.mirror_z = mirror_z
+        self.vacuum = vacuum
+        self.translation_vec = translation_vec
+        self.merge_tol = merge_tol
+        self.reconstruction = reconstruction
+        self.bonds = bonds
+        self.ftol = ftol
+        self.tol = tol
+        self.max_broken_bonds = max_broken_bonds
+        self.symmetrize = symmetrize
+        self.repair = repair
 
-    def get_grain_boundaries(
-        self,
+    def __iter__(self) -> Iterator["GrainBoundary"]:
+        """Generate an iterator of GrainBoundaries over possible grain terminations.
+
+        Using the arguements available to the GrainGenerator and GrainBoundary
+        classes create an iterator over the available grains.
+        """
+        grains_0 = GrainGenerator(self.bulk_0, self.miller_0).get_grains(
+            self.bonds,
+            self.ftol,
+            self.tol,
+            self.max_broken_bonds,
+            self.symmetrize,
+            self.repair,
+        )
+        if self.bulk_1 is not None or self.miller_1 is not None:
+            bulk_1 = self.bulk_1 if self.bulk_1 is not None else self.bulk_0
+            miller_1 = self.miller_1 if self.miller_1 is not None else self.miller_0
+            grains_1 = GrainGenerator(bulk_1, miller_1).get_grains(
+                self.bonds,
+                self.ftol,
+                self.tol,
+                self.max_broken_bonds,
+                self.symmetrize,
+                self.repair,
+            )
+
+            def map_func_gs(grains):
+                return GrainBoundary(
+                    grains[0],
+                    grains[1],
+                    mirror_x=self.mirror_x,
+                    mirror_y=self.mirror_y,
+                    mirror_z=self.mirror_z,
+                    vacuum=self.vacuum,
+                    translation_vec=self.translation_vec,
+                    merge_tol=self.merge_tol,
+                    reconstruction=self.reconstruction,
+                )
+
+            gb_map = map(map_func_gs, product(grains_0, grains_1))
+        else:
+
+            def map_func_g(grain):
+                return GrainBoundary(
+                    grain,
+                    mirror_x=self.mirror_x,
+                    mirror_y=self.mirror_y,
+                    mirror_z=self.mirror_z,
+                    vacuum=self.vacuum,
+                    translation_vec=self.translation_vec,
+                    merge_tol=self.merge_tol,
+                    reconstruction=self.reconstruction,
+                )
+
+            gb_map = map(map_func_g, grains_0)
+        for gb in gb_map:
+            yield gb
+
+    def get_grain_boundaries(self) -> List["GrainBoundary"]:
+        return list(self)
+
+    @classmethod
+    def from_file(
+        cls,
+        filename_0: str,
+        miller_0: ArrayLike,
+        filename_1: Optional[str] = None,
+        miller_1: Optional[ArrayLike] = None,
         mirror_x: bool = False,
         mirror_y: bool = False,
         mirror_z: bool = False,
@@ -140,61 +232,6 @@ class GrainBoundaryGenerator:
         max_broken_bonds: int = 0,
         symmetrize: bool = False,
         repair: bool = False,
-    ) -> Iterator["GrainBoundary"]:
-        """Generate an iterator of GrainBoundaries over possible grain terminations.
-
-        Using the arguements available to the GrainGenerator and GrainBoundary
-        classes create an iterator over the available grains.
-        """
-        grains_0 = GrainGenerator(self.bulk_0, self.miller_0).get_grains(
-            bonds, ftol, tol, max_broken_bonds, symmetrize, repair
-        )
-        if self.bulk_1 is not None or self.miller_1 is not None:
-            bulk_1 = self.bulk_1 if self.bulk_1 is not None else self.bulk_0
-            miller_1 = self.miller_1 if self.miller_1 is not None else self.miller_0
-            grains_1 = GrainGenerator(bulk_1, miller_1).get_grains(
-                bonds, ftol, tol, max_broken_bonds, symmetrize, repair
-            )
-
-            def map_func_gs(grains):
-                return GrainBoundary(
-                    grains[0],
-                    grains[1],
-                    mirror_x=mirror_x,
-                    mirror_y=mirror_y,
-                    mirror_z=mirror_z,
-                    vacuum=vacuum,
-                    translation_vec=translation_vec,
-                    merge_tol=merge_tol,
-                    reconstruction=reconstruction,
-                )
-
-            gb_map = map(map_func_gs, product(grains_0, grains_1))
-        else:
-
-            def map_func_g(grain):
-                return GrainBoundary(
-                    grain,
-                    mirror_x=mirror_x,
-                    mirror_y=mirror_y,
-                    mirror_z=mirror_z,
-                    vacuum=vacuum,
-                    translation_vec=translation_vec,
-                    merge_tol=merge_tol,
-                    reconstruction=reconstruction,
-                )
-
-            gb_map = map(map_func_g, grains_0)
-        for gb in gb_map:
-            yield gb
-
-    @classmethod
-    def from_file(
-        cls,
-        filename_0: str,
-        miller_0: ArrayLike,
-        filename_1: Optional[str] = None,
-        miller_1: Optional[ArrayLike] = None,
     ) -> "GrainBoundaryGenerator":
         """Convience method for creating GrainBoundaries from files.
 
@@ -204,7 +241,25 @@ class GrainBoundaryGenerator:
         """
         bulk_0 = Structure.from_file(filename_0)
         bulk_1 = None if filename_1 is None else Structure.from_file(filename_1)
-        return cls(bulk_0, miller_0, bulk_1, miller_1)
+        return cls(
+            bulk_0,
+            miller_0,
+            bulk_1,
+            miller_1,
+            mirror_x=mirror_x,
+            mirror_y=mirror_y,
+            mirror_z=mirror_z,
+            vacuum=vacuum,
+            translation_vec=translation_vec,
+            merge_tol=merge_tol,
+            reconstruction=reconstruction,
+            bonds=bonds,
+            ftol=ftol,
+            tol=tol,
+            max_broken_bonds=max_broken_bonds,
+            symmetrize=symmetrize,
+            repair=repair,
+        )
 
 
 class Grain:
