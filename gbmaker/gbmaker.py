@@ -10,6 +10,7 @@ from pymatgen.analysis.structure_matcher import StructureMatcher
 from pymatgen.util.typing import SpeciesLike
 from typing import Dict, Sequence, Any, Callable, Optional, List, Iterator
 from numpy.typing import ArrayLike
+from .warnings import Warnings
 
 
 class GrainGenerator(SlabGenerator):
@@ -35,7 +36,7 @@ class GrainGenerator(SlabGenerator):
         sg = SpacegroupAnalyzer(bulk_cell)
         unit_cell = sg.get_conventional_standard_structure()
         if unit_cell != bulk_cell:
-            warnings.warn(f"Non-conventional unit cell supplied, using:\n{unit_cell}")
+            Warnings.UnitCell(unit_cell)
         primitive_cell = sg.get_primitive_standard_structure()
         T = sg.get_conventional_to_primitive_transformation_matrix()
         # calculate the miller index relative to the primitive cell
@@ -720,7 +721,7 @@ class Grain:
         cls,
         oriented_unit_cell: Structure,
         miller_index: ArrayLike,
-        shift: float,
+        shift: float = 0.0,
         mirror_x: bool = False,
         mirror_y: bool = False,
         mirror_z: bool = False,
