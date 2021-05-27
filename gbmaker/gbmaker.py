@@ -8,6 +8,7 @@ from pymatgen.core.operations import SymmOp
 from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
 from pymatgen.analysis.structure_matcher import StructureMatcher
 from pymatgen.util.typing import SpeciesLike
+from pymatgen.util.coord import lattice_points_in_supercell
 from typing import Dict, Sequence, Any, Callable, Optional, List, Iterator
 from numpy.typing import ArrayLike
 from .warnings import Warnings
@@ -24,6 +25,13 @@ class GrainGenerator(SlabGenerator):
         self,
         bulk_cell: Structure,
         miller_index: ArrayLike,
+        bonds: Optional[Dict[Sequence[SpeciesLike], float]] = None,
+        ftol: float = 0.1,
+        tol: float = 0.1,
+        max_broken_bonds: int = 0,
+        symmetrize: bool = False,
+        repair: bool = False,
+        orthogonal_c: bool = False,
     ):
         """Initialise the GrainGenerator class from any bulk structure.
 
@@ -49,6 +57,13 @@ class GrainGenerator(SlabGenerator):
         # use the conventional standard structure and the supplied miller index
         self.parent = unit_cell
         self.miller_index = np.array(miller_index)
+        self.bonds = bonds
+        self.ftol = ftol
+        self.tol = tol
+        self.max_broken_bonds = max_broken_bonds
+        self.symmetrize = symmetrize
+        self.repair = repair
+        self.orthogonal_c = orthogonal_c
 
     def get_grain(self, shift: float = 0.0) -> "Grain":
         """From a given fractional shift in c in the oriented unit cell create a Grain.
@@ -61,44 +76,45 @@ class GrainGenerator(SlabGenerator):
             self.miller_index.copy(),
             shift,
             hkl_spacing=self.parent.lattice.d_hkl(self.miller_index),
+            orthogonal_c=self.orthogonal_c,
         )
 
-    def get_grains(
-        self,
-        bonds: Optional[Dict[Sequence[SpeciesLike], float]] = None,
-        ftol: float = 0.1,
-        tol: float = 0.1,
-        max_broken_bonds: int = 0,
-        symmetrize: bool = False,
-        repair: bool = False,
-    ) -> Iterator["Grain"]:
+    def __iter__(self) -> Iterator["Grain"]:
         """Get the differing terminations of Grains for the oriented unit cell.
 
         This is a similar method to get_slabs() but yeilding Grains instead of
         returning slabs. Grains are repaired before they are symmetrized and
         there is no current way to reverse this behavour.
         """
-        c_ranges = set() if bonds is None else self._get_c_ranges(bonds)
+        c_ranges = set() if self.bonds is None else self._get_c_ranges(self.bonds)
 
         grains = []
-        for shift in self._calculate_possible_shifts(tol=ftol):
+        for shift in self._calculate_possible_shifts(tol=self.ftol):
             bonds_broken = 0
             for r in c_ranges:
                 if r[0] <= shift <= r[1]:
                     bonds_broken += 1
             grain = self.get_grain(shift)
-            if bonds_broken <= max_broken_bonds:
+            if bonds_broken <= self.max_broken_bonds:
                 grains.append(grain)
-            elif repair:
-                grain.bonds = bonds
+            elif self.repair:
+                grain.bonds = self.bonds
                 grains.append(grain)
 
-        if symmetrize:
+        if self.symmetrize:
             grains = [g for g in grains if g.can_symmetrize_surfaces(True)]
 
-        match = StructureMatcher(ltol=tol, stol=tol, primitive_cell=False, scale=False)
+        match = StructureMatcher(
+            ltol=self.tol,
+            stol=self.tol,
+            primitive_cell=False,
+            scale=False,
+        )
         for grain, *_ in match.group_structures(grains):
             yield grain
+
+    def get_grains(self) -> List["Grain"]:
+        return list(self)
 
 
 class GrainBoundaryGenerator:
@@ -123,6 +139,10 @@ class GrainBoundaryGenerator:
         max_broken_bonds: int = 0,
         symmetrize: bool = False,
         repair: bool = False,
+        bulk_repeats: int = 1,
+        thickness: Optional[float] = None,
+        hkl_thickness: Optional[float] = None,
+        orthogonal_c: bool = False,
     ):
         """Initialise the generator with either one or two bulk structures.
 
@@ -133,23 +153,76 @@ class GrainBoundaryGenerator:
           - Moire lattice matching.
           - Rotation.
         """
-        self.bulk_0 = bulk_0
-        self.miller_0 = miller_0
-        self.bulk_1 = bulk_1
-        self.miller_1 = miller_1
-        self.mirror_x = mirror_x
-        self.mirror_y = mirror_y
-        self.mirror_z = mirror_z
-        self.vacuum = vacuum
-        self.translation_vec = translation_vec
-        self.merge_tol = merge_tol
-        self.reconstruction = reconstruction
-        self.bonds = bonds
-        self.ftol = ftol
-        self.tol = tol
-        self.max_broken_bonds = max_broken_bonds
-        self.symmetrize = symmetrize
-        self.repair = repair
+        self.grains_0 = GrainGenerator(
+            bulk_0,
+            miller_0,
+            bonds,
+            ftol,
+            tol,
+            max_broken_bonds,
+            symmetrize,
+            repair,
+            orthogonal_c,
+        ).get_grains()
+        for g in self.grains_0:
+            if hkl_thickness is not None:
+                g.hkl_thickness = hkl_thickness
+            elif thickness is not None:
+                g.thickness = thickness
+            else:
+                g.bulk_repeats = bulk_repeats
+
+        if bulk_1 is not None or miller_1 is not None:
+            bulk_1 = bulk_1 if bulk_1 is not None else bulk_0
+            miller_1 = miller_1 if miller_1 is not None else miller_0
+            self.grains_1 = GrainGenerator(
+                bulk_1,
+                miller_1,
+                bonds,
+                ftol,
+                tol,
+                max_broken_bonds,
+                symmetrize,
+                repair,
+                orthogonal_c,
+            ).get_grains()
+            for g in self.grains_1:
+                if hkl_thickness is not None:
+                    g.hkl_thickness = hkl_thickness
+                elif thickness is not None:
+                    g.thickness = thickness
+                else:
+                    g.bulk_repeats = bulk_repeats
+
+            def map_func_gs(grains):
+                return GrainBoundary(
+                    grains[0],
+                    grains[1],
+                    mirror_x=mirror_x,
+                    mirror_y=mirror_y,
+                    mirror_z=mirror_z,
+                    vacuum=vacuum,
+                    translation_vec=translation_vec,
+                    merge_tol=merge_tol,
+                    reconstruction=reconstruction,
+                )
+
+            self.gb_map = map(map_func_gs, product(self.grains_0, self.grains_1))
+        else:
+
+            def map_func_g(grain):
+                return GrainBoundary(
+                    grain,
+                    mirror_x=mirror_x,
+                    mirror_y=mirror_y,
+                    mirror_z=mirror_z,
+                    vacuum=vacuum,
+                    translation_vec=translation_vec,
+                    merge_tol=merge_tol,
+                    reconstruction=reconstruction,
+                )
+
+            self.gb_map = map(map_func_g, self.grains_0)
 
     def __iter__(self) -> Iterator["GrainBoundary"]:
         """Generate an iterator of GrainBoundaries over possible grain terminations.
@@ -157,57 +230,7 @@ class GrainBoundaryGenerator:
         Using the arguements available to the GrainGenerator and GrainBoundary
         classes create an iterator over the available grains.
         """
-        grains_0 = GrainGenerator(self.bulk_0, self.miller_0).get_grains(
-            self.bonds,
-            self.ftol,
-            self.tol,
-            self.max_broken_bonds,
-            self.symmetrize,
-            self.repair,
-        )
-        if self.bulk_1 is not None or self.miller_1 is not None:
-            bulk_1 = self.bulk_1 if self.bulk_1 is not None else self.bulk_0
-            miller_1 = self.miller_1 if self.miller_1 is not None else self.miller_0
-            grains_1 = GrainGenerator(bulk_1, miller_1).get_grains(
-                self.bonds,
-                self.ftol,
-                self.tol,
-                self.max_broken_bonds,
-                self.symmetrize,
-                self.repair,
-            )
-
-            def map_func_gs(grains):
-                return GrainBoundary(
-                    grains[0],
-                    grains[1],
-                    mirror_x=self.mirror_x,
-                    mirror_y=self.mirror_y,
-                    mirror_z=self.mirror_z,
-                    vacuum=self.vacuum,
-                    translation_vec=self.translation_vec,
-                    merge_tol=self.merge_tol,
-                    reconstruction=self.reconstruction,
-                )
-
-            gb_map = map(map_func_gs, product(grains_0, grains_1))
-        else:
-
-            def map_func_g(grain):
-                return GrainBoundary(
-                    grain,
-                    mirror_x=self.mirror_x,
-                    mirror_y=self.mirror_y,
-                    mirror_z=self.mirror_z,
-                    vacuum=self.vacuum,
-                    translation_vec=self.translation_vec,
-                    merge_tol=self.merge_tol,
-                    reconstruction=self.reconstruction,
-                )
-
-            gb_map = map(map_func_g, grains_0)
-        for gb in gb_map:
-            yield gb
+        return self.gb_map.__iter__()
 
     def get_grain_boundaries(self) -> List["GrainBoundary"]:
         return list(self)
@@ -232,6 +255,10 @@ class GrainBoundaryGenerator:
         max_broken_bonds: int = 0,
         symmetrize: bool = False,
         repair: bool = False,
+        bulk_repeats: int = 1,
+        thickness: Optional[float] = None,
+        hkl_thickness: Optional[float] = None,
+        orthogonal_c: bool = False,
     ) -> "GrainBoundaryGenerator":
         """Convience method for creating GrainBoundaries from files.
 
@@ -259,6 +286,10 @@ class GrainBoundaryGenerator:
             max_broken_bonds=max_broken_bonds,
             symmetrize=symmetrize,
             repair=repair,
+            bulk_repeats=bulk_repeats,
+            thickness=thickness,
+            hkl_thickness=hkl_thickness,
+            orthogonal_c=orthogonal_c,
         )
 
 
@@ -273,7 +304,6 @@ class Grain:
         self,
         oriented_unit_cell: Structure,
         miller_index: ArrayLike,
-        shift: ArrayLike,
         mirror_x: bool = False,
         mirror_y: bool = False,
         mirror_z: bool = False,
@@ -298,7 +328,6 @@ class Grain:
         orthogonal_c: Whether to orthogonalise the c-vector.
         """
         self.miller_index = np.array(miller_index)
-        self.shift = np.array(shift)
         self.hkl_spacing = hkl_spacing
         self.oriented_unit_cell = IStructure.from_sites(oriented_unit_cell)
         self.bulk_thickness = self.oriented_unit_cell.lattice.matrix[2, 2]
@@ -344,7 +373,7 @@ class Grain:
         # check the surface can be symmetrized before allowing it to be set.
         if b:
             self.can_symmetrize_surfaces(True)
-            if not self._symmetrize:
+            if not self.symmetrize:
                 warnings.warn("Cannot symmetrize surface.")
         # if trying to set false delete the attribute '_symmetrize' if it exists.
         elif self.symmetrize:
@@ -353,11 +382,13 @@ class Grain:
     @property
     def lattice(self) -> Lattice:
         """The lattice of the grain (before repair or symmetrize)."""
-        h = self.bulk_repeats * self.bulk_thickness
+        h = self.thickness + 5.0
         lattice = self.oriented_unit_cell.lattice.matrix.copy()
         lattice[0] *= self.ab_scale[0]
         lattice[1] *= self.ab_scale[1]
         lattice[2] *= h / lattice[2, 2]
+        if self.orthogonal_c:
+            lattice[2, :2] = 0
         return Lattice(lattice)
 
     @property
@@ -377,62 +408,7 @@ class Grain:
         return list(self)
 
     def __iter__(self) -> Iterator[PeriodicSite]:
-        """Iterate over the sites in the Grain."""
-        mirror = np.power([-1, -1, -1], self._mirror)
-        z_shift = int(self.mirror_z) * self.lattice.matrix[2] * -1 * mirror
-        lattice = self.lattice.matrix.copy()
-        # 5 Ang of vacuum to help the symmetry analyser distinguish between
-        # different terminations
-        lattice[2] *= (lattice[2, 2] + 5) / lattice[2, 2]
-        lattice = Lattice(lattice)
-        sites = []
-        # if we want to symmetrize then we need to add another bulk repeat
-        # this bulk repeat will be removed during the symmetrizing and ensures
-        # that the thickness is above the set amount
-        ouc = self.oriented_unit_cell * [
-            *self.ab_scale,
-            self.bulk_repeats + self.symmetrize,
-        ]
-        # the wrapping in pymatgen is succeptible to floating point errors and we
-        # need to make sure that the 'bottom' layer stays on the bottom
-        ouc.translate_sites(
-            range(len(ouc)),
-            self.translation_vec - self.shift,
-            frac_coords=False,
-            to_unit_cell=False,
-        )
-        for site in ouc.sites:
-            c = np.round(site.frac_coords, 8) % 1
-            c = ouc.lattice.get_cartesian_coords(c)
-            c *= mirror
-            c += z_shift
-            c = np.round(lattice.get_fractional_coords(c), 8)
-            sites.append(
-                PeriodicSite(
-                    site.species,
-                    c,
-                    lattice,
-                    properties=site.properties,
-                )
-            )
-        struct = self.repair_broken_bonds(Structure.from_sites(sites, self.charge))
-        if self.symmetrize:
-            struct = self.symmetrize_surfaces(struct)
-        if self.orthogonal_c:
-            lattice = struct.lattice.matrix.copy()
-            lattice[2, :2] = 0
-            struct = Structure(
-                lattice,
-                struct.species_and_occu,
-                struct.cart_coords,
-                struct.charge,
-                False,
-                False,
-                True,
-                struct.site_properties,
-            )
-        for s in struct:
-            yield s
+        return self.get_structure().__iter__()
 
     def __getitem__(self, ind: int) -> PeriodicSite:
         """Return a specific site when the Grain is indexed."""
@@ -557,7 +533,6 @@ class Grain:
         grain = Grain(
             self.oriented_unit_cell.copy(),
             self.miller_index.copy(),
-            self.shift.copy(),
             self.mirror_x,
             self.mirror_y,
             self.mirror_z,
@@ -566,6 +541,7 @@ class Grain:
             self.orthogonal_c,
         )
         grain.bulk_repeats = self.bulk_repeats
+        grain.symmetrize = self.symmetrize
         return grain
 
     @property
@@ -606,8 +582,8 @@ class Grain:
             return False
         elif set_symmetrize:
             self._symmetrize = True
-            self._extra_thickness = slab.cart_coords.max(axis=0)[2] - (
-                self.bulk_repeats * self.bulk_thickness
+            self._extra_thickness = (
+                slab.cart_coords.max(axis=0)[2] - self.bulk_thickness
             )
             self._len = len(slab)
             return True
@@ -626,7 +602,7 @@ class Grain:
             struct.cart_coords,
             self.miller_index.copy(),
             self.oriented_unit_cell.copy(),
-            self.shift[2],
+            0,
             [1, 1, 1],
             False,
             coords_are_cartesian=True,
@@ -708,7 +684,63 @@ class Grain:
         and returns a bool specifying whether to include the site in the final
         Structure.
         """
-        struct = Structure.from_sites(self.sites, self.charge)
+        # if we want to symmetrize then we need to add another bulk repeat
+        # this bulk repeat will be removed during the symmetrizing and ensures
+        # that the thickness is above the set amount
+        cart_shifts = [
+            np.dot(shift, self.oriented_unit_cell.lattice.matrix)
+            for shift in np.ndindex(
+                (
+                    *self.ab_scale,
+                    self.bulk_repeats + self.symmetrize,
+                ),
+            )
+        ]
+        sites = []
+        cart_coords = self.oriented_unit_cell.cart_coords + self.translation_vec
+        for coord, site in zip(cart_coords, self.oriented_unit_cell):
+            for shift in cart_shifts:
+                c = np.round(self.lattice.get_fractional_coords(coord + shift), 8) % 1
+                sites.append(
+                    PeriodicSite(
+                        site.species,
+                        c,
+                        self.lattice,
+                        to_unit_cell=False,
+                        coords_are_cartesian=False,
+                        properties=site.properties,
+                    )
+                )
+
+        # the wrapping in pymatgen is succeptible to floating point errors and we
+        # need to make sure that the 'bottom' layer stays on the bottom
+        struct = self.repair_broken_bonds(Structure.from_sites(sites, self.charge))
+        if self.symmetrize:
+            struct = self.symmetrize_surfaces(struct)
+            if struct is None:
+                raise TypeError
+        # after we have built, repaired and symmetrized the grain we can now
+        # mirror in cartesian directions.
+        if np.any(self._mirror):
+            mirror = np.power([-1, -1, -1], self._mirror)
+            height = self.thickness / self.lattice.matrix[2, 2]
+            z_shift = self.lattice.matrix[2] * height
+            z_shift *= -int(self.mirror_z) * mirror
+            c = np.round(struct.frac_coords, 8) % 1
+            c = struct.lattice.get_cartesian_coords(c)
+            c *= mirror
+            c += z_shift
+            c = np.round(struct.lattice.get_fractional_coords(c), 8) % 1
+            struct = Structure(
+                struct.lattice,
+                struct.species_and_occu,
+                c,
+                struct.charge,
+                False,
+                False,
+                False,
+                struct.site_properties,
+            )
         if reconstruction is not None:
             del_i = []
             for i, site in enumerate(struct.sites):
@@ -764,7 +796,7 @@ class Grain:
             slab.cart_coords,
             self.miller_index.copy(),
             self.oriented_unit_cell.copy(),
-            self.shift[2],
+            0,
             [1, 1, 1],
             False,
             coords_are_cartesian=True,
@@ -792,29 +824,28 @@ class Grain:
         rotated so that the ab-plane lies in the xy-plane and that the a-vector
         runs parallel to the x-direction.
         """
-        if "bulk_equivalent" not in oriented_unit_cell.site_properties:
-            sg = SpacegroupAnalyzer(oriented_unit_cell)
-            oriented_unit_cell.add_site_property(
+        # try and orthogonalise the structure
+        ouc = oriented_unit_cell.copy()
+        if "bulk_equivalent" not in ouc.site_properties:
+            sg = SpacegroupAnalyzer(ouc)
+            ouc.add_site_property(
                 "bulk_equivalent",
                 sg.get_symmetry_dataset()["equivalent_atoms"].tolist(),
             )
         # first rotate the oriented unit cell so that the miller index is along z
-        R = rotation(np.cross(*oriented_unit_cell.lattice.matrix[:2]))
+        R = rotation(np.cross(*ouc.lattice.matrix[:2]))
         symmop = SymmOp.from_rotation_and_translation(rotation_matrix=R)
-        oriented_unit_cell.apply_operation(symmop)
+        ouc.apply_operation(symmop)
         # then rotate the oriented unit cell so that the a-vector lies along x
-        theta = np.arccos(
-            oriented_unit_cell.lattice.matrix[0, 0] / oriented_unit_cell.lattice.a
-        )
-        theta *= -1 if oriented_unit_cell.lattice.matrix[0, 1] > 0 else 1
+        theta = np.arccos(ouc.lattice.matrix[0, 0] / ouc.lattice.a)
+        theta *= -1 if ouc.lattice.matrix[0, 1] > 0 else 1
         symmop = SymmOp.from_axis_angle_and_translation(
             [0, 0, 1],
             theta,
             True,
         )
-        oriented_unit_cell.apply_operation(symmop)
-        # try and orthogonalise the structure
-        ouc = orthogonalise(oriented_unit_cell.copy())
+        ouc.apply_operation(symmop)
+        ouc = orthogonalise(ouc)
         origin_shift = ouc.lattice.get_cartesian_coords([0, 0, shift])
         ouc.translate_sites(
             indices=range(len(oriented_unit_cell)),
@@ -823,11 +854,28 @@ class Grain:
             frac_coords=False,
         )
         ouc.sort(key=lambda site: (round(site.z, 8), site.bulk_equivalent))
-        origin_shift += ouc.cart_coords[0]
+        origin_shift = ouc.frac_coords[0]
+        ouc.translate_sites(
+            indices=range(len(oriented_unit_cell)),
+            vector=-origin_shift,
+            to_unit_cell=False,
+            frac_coords=True,
+        )
+        # lets try and remove the floating point error from the structure
+        lattice = np.round(ouc.lattice.matrix, 8)
+        ouc = Structure(
+            lattice,
+            ouc.species_and_occu,
+            np.mod(np.round(ouc.frac_coords, 8), 1),
+            ouc.charge,
+            False,
+            False,
+            False,
+            ouc.site_properties,
+        )
         grain = cls(
-            oriented_unit_cell.copy(),
+            ouc,
             miller_index,
-            origin_shift,
             mirror_x,
             mirror_y,
             mirror_z,
@@ -927,7 +975,12 @@ class Grain:
         top_site_index = [i for i in index if struct[i].frac_coords[2] > com[2]]
         bottom_site_index = [i for i in index if struct[i].frac_coords[2] < com[2]]
 
-        s = self.lattice.matrix[2].copy()
+        s = (
+            self.oriented_unit_cell.lattice.matrix[2]
+            * self.bulk_repeats
+            * self.bulk_thickness
+            / self.oriented_unit_cell.lattice.matrix[2, 2]
+        )
         s *= np.power([-1, -1, -1], self._mirror + 1) if self.mirror_z else 1
         s *= np.ceil(s[2] / self.bulk_thickness) * self.bulk_thickness / s[2]
 
