@@ -614,8 +614,9 @@ class Grain:
         # maybe add energy at some point
         # slab.energy = init_slab.energy
         grain = None
+        sites = self.oriented_unit_cell * [*self.ab_scale, 1]
 
-        for _ in self.oriented_unit_cell.sites:
+        for _ in sites:
             # Keep removing sites from the TOP one by one until both
             # surfaces are symmetric or the number of sites IS EQUAL TO THE
             # NUMBER OF ATOMS IN THE ORIENTED UNIT CELL.
