@@ -8,7 +8,6 @@ from pymatgen.core.operations import SymmOp
 from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
 from pymatgen.analysis.structure_matcher import StructureMatcher
 from pymatgen.util.typing import SpeciesLike
-from pymatgen.util.coord import lattice_points_in_supercell
 from typing import Dict, Sequence, Any, Callable, Optional, List, Iterator
 from numpy.typing import ArrayLike
 from .warnings import Warnings
@@ -57,13 +56,32 @@ class GrainGenerator(SlabGenerator):
         # use the conventional standard structure and the supplied miller index
         self.parent = unit_cell
         self.miller_index = np.array(miller_index)
-        self.bonds = bonds
-        self.ftol = ftol
-        self.tol = tol
-        self.max_broken_bonds = max_broken_bonds
-        self.symmetrize = symmetrize
-        self.repair = repair
         self.orthogonal_c = orthogonal_c
+        c_ranges = set() if bonds is None else self._get_c_ranges(bonds)
+
+        grains = []
+        for shift in self._calculate_possible_shifts(tol=ftol):
+            bonds_broken = 0
+            for r in c_ranges:
+                if r[0] <= shift <= r[1]:
+                    bonds_broken += 1
+            grain = self.get_grain(shift)
+            if bonds_broken <= max_broken_bonds:
+                grains.append(grain)
+            elif repair:
+                grain.bonds = bonds
+                grains.append(grain)
+
+        if symmetrize:
+            grains = [g for g in grains if g.can_symmetrize_surfaces(True)]
+
+        match = StructureMatcher(
+            ltol=tol,
+            stol=tol,
+            primitive_cell=False,
+            scale=False,
+        )
+        self.iter = iter([grain for grain, *_ in match.group_structures(grains)])
 
     def get_grain(self, shift: float = 0.0) -> "Grain":
         """From a given fractional shift in c in the oriented unit cell create a Grain.
@@ -79,42 +97,20 @@ class GrainGenerator(SlabGenerator):
             orthogonal_c=self.orthogonal_c,
         )
 
-    def __iter__(self) -> Iterator["Grain"]:
+    def get_grains(self) -> List["Grain"]:
         """Get the differing terminations of Grains for the oriented unit cell.
 
         This is a similar method to get_slabs() but yeilding Grains instead of
         returning slabs. Grains are repaired before they are symmetrized and
         there is no current way to reverse this behavour.
         """
-        c_ranges = set() if self.bonds is None else self._get_c_ranges(self.bonds)
-
-        grains = []
-        for shift in self._calculate_possible_shifts(tol=self.ftol):
-            bonds_broken = 0
-            for r in c_ranges:
-                if r[0] <= shift <= r[1]:
-                    bonds_broken += 1
-            grain = self.get_grain(shift)
-            if bonds_broken <= self.max_broken_bonds:
-                grains.append(grain)
-            elif self.repair:
-                grain.bonds = self.bonds
-                grains.append(grain)
-
-        if self.symmetrize:
-            grains = [g for g in grains if g.can_symmetrize_surfaces(True)]
-
-        match = StructureMatcher(
-            ltol=self.tol,
-            stol=self.tol,
-            primitive_cell=False,
-            scale=False,
-        )
-        for grain, *_ in match.group_structures(grains):
-            yield grain
-
-    def get_grains(self) -> List["Grain"]:
         return list(self)
+
+    def __iter__(self) -> Iterator["Grain"]:
+        return self.iter.__iter__()
+
+    def __next__(self) -> "Grain":
+        return self.iter.__next__()
 
 
 class GrainBoundaryGenerator:
@@ -231,6 +227,9 @@ class GrainBoundaryGenerator:
         classes create an iterator over the available grains.
         """
         return self.gb_map.__iter__()
+
+    def __next__(self) -> "GrainBoundary":
+        return self.gb_map.__next__()
 
     def get_grain_boundaries(self) -> List["GrainBoundary"]:
         return list(self)
@@ -445,7 +444,7 @@ class Grain:
     @property
     def thickness(self) -> float:
         """The thickness of the grain in Angstrom."""
-        bulk = self.bulk_repeats * self.bulk_thickness
+        bulk = (self.bulk_repeats + int(self.symmetrize)) * self.bulk_thickness
         return self.extra_thickness + bulk
 
     @thickness.setter
@@ -567,9 +566,8 @@ class Grain:
         slab = self.get_slab(bulk_repeats=2)
         # reset the extra thickness and '_len' (this could have been called
         # from bonds whilst previously being able to symmetrize)
-        self._extra_thickness = (
-            self.oriented_unit_cell.cart_coords.max(axis=0)[2]
-            - self.oriented_unit_cell.lattice.matrix[2, 2]
+        self._extra_thickness = slab.cart_coords.max(axis=0)[2] - (
+            2 * self.bulk_thickness
         )
         try:
             self.__delattr__("_len")
@@ -582,8 +580,8 @@ class Grain:
             return False
         elif set_symmetrize:
             self._symmetrize = True
-            self._extra_thickness = (
-                slab.cart_coords.max(axis=0)[2] - self.bulk_thickness
+            self._extra_thickness = slab.cart_coords.max(axis=0)[2] - (
+                2 * self.bulk_thickness
             )
             self._len = len(slab)
             return True
@@ -698,14 +696,22 @@ class Grain:
         ]
         sites = []
         cart_coords = self.oriented_unit_cell.cart_coords + self.translation_vec
+        if self.symmetrize:
+            lattice = self.lattice.matrix.copy()
+            lattice[2] *= (
+                1 + self.oriented_unit_cell.lattice.matrix[2, 2] / lattice[2, 2]
+            )
+            lattice = Lattice(lattice)
+        else:
+            lattice = self.lattice
         for coord, site in zip(cart_coords, self.oriented_unit_cell):
             for shift in cart_shifts:
-                c = np.round(self.lattice.get_fractional_coords(coord + shift), 8) % 1
+                c = np.round(lattice.get_fractional_coords(coord + shift), 14) % 1
                 sites.append(
                     PeriodicSite(
                         site.species,
                         c,
-                        self.lattice,
+                        lattice,
                         to_unit_cell=False,
                         coords_are_cartesian=False,
                         properties=site.properties,
@@ -726,13 +732,12 @@ class Grain:
             height = self.thickness / self.lattice.matrix[2, 2]
             z_shift = self.lattice.matrix[2] * height
             z_shift *= -int(self.mirror_z) * mirror
-            c = np.round(struct.frac_coords, 8) % 1
-            c = struct.lattice.get_cartesian_coords(c)
+            c = struct.cart_coords
             c *= mirror
             c += z_shift
-            c = np.round(struct.lattice.get_fractional_coords(c), 8) % 1
+            c = np.round(self.lattice.get_fractional_coords(c), 12) % 1
             struct = Structure(
-                struct.lattice,
+                self.lattice.matrix.copy(),
                 struct.species_and_occu,
                 c,
                 struct.charge,
@@ -862,11 +867,11 @@ class Grain:
             frac_coords=True,
         )
         # lets try and remove the floating point error from the structure
-        lattice = np.round(ouc.lattice.matrix, 8)
+        lattice = np.round(ouc.lattice.matrix, 15)
         ouc = Structure(
             lattice,
             ouc.species_and_occu,
-            np.mod(np.round(ouc.frac_coords, 8), 1),
+            np.mod(np.round(ouc.frac_coords, 15), 1),
             ouc.charge,
             False,
             False,
@@ -977,11 +982,10 @@ class Grain:
 
         s = (
             self.oriented_unit_cell.lattice.matrix[2]
-            * self.bulk_repeats
+            * (self.bulk_repeats + int(self.symmetrize))
             * self.bulk_thickness
             / self.oriented_unit_cell.lattice.matrix[2, 2]
         )
-        s *= np.power([-1, -1, -1], self._mirror + 1) if self.mirror_z else 1
         s *= np.ceil(s[2] / self.bulk_thickness) * self.bulk_thickness / s[2]
 
         # Translate sites to the opposite surfaces

@@ -6,8 +6,8 @@ from pymatgen.vis.structure_vtk import MultiStructuresVis
 bulk = Structure.from_file("./POSCAR-bulk")
 
 # generate the grains
-gg = GrainGenerator(bulk, [0, 1, 1])
-grains = list(gg.get_grains())
+gg = GrainGenerator(bulk, [0, 1, 1], orthogonal_c=True)
+grains = gg.get_grains()
 
 # view the grains
 view = MultiStructuresVis()
@@ -16,7 +16,6 @@ view.show()
 
 # orthogonalise the c-vector so that each boundary is symmetric
 grain = grains[0]
-grain.orthogonal_c = True
 grain.hkl_thickness = 3.5
 
 # seperate the grains by 2 Angstrom

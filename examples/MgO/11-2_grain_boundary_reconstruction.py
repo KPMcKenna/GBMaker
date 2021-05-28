@@ -1,17 +1,8 @@
-from gbmaker import Grain, GrainGenerator, GrainBoundary
-from pymatgen.core import Structure, Site
+from gbmaker import Grain, GrainBoundaryGenerator
 
-# Read grain from an oriented unit cell
-bulk = Structure.from_file(filename="./POSCAR-bulk")
-grain = next(GrainGenerator(bulk, [1, 1, -2]).get_grains())
-
-# orthogonalise the grain and make a mirrored copy, translated so that there is
-# an atom at (0, 0, 0)
-# this ensures symmetry between both boundaries for mirrored grains
-grain.orthogonal_c = True
 
 # Define the reconstruction function
-def reconstruction(gb: Grain, site: Site) -> bool:
+def reconstruction(gb: Grain, site) -> bool:
     # {110} planes run at 60 deg to the c-axis (11-2) and 30 deg to the a-axis (110)
     m = 3 ** 0.5
     # as viewed down the (111) the c-axis(11-2) is our x-direction and the a-axis (110)
@@ -29,7 +20,14 @@ def reconstruction(gb: Grain, site: Site) -> bool:
     return in_grain
 
 
-gb = GrainBoundary(grain_0=grain, mirror_z=True, reconstruction=reconstruction)
+# Read grain from an oriented unit cell
+gb = GrainBoundaryGenerator.from_file(
+    "./POSCAR-bulk",
+    [1, 1, -2],
+    mirror_z=True,
+    reconstruction=reconstruction,
+    orthogonal_c=True,
+).get_grain_boundaries()[0]
 
 # shift the second lattice to make the grains symmetric
 a_shift = -gb.grain_0.lattice.a / 2

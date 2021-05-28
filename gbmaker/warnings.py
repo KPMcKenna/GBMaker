@@ -7,7 +7,7 @@ def formatwarning(
     catagory,
     *_,
 ):
-    return f"{catagory.__name__}\n{message}"
+    return f"{catagory.__name__}\n{message}\n"
 
 
 warnings.formatwarning = formatwarning

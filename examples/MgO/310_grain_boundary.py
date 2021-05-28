@@ -1,11 +1,9 @@
-import numpy as np
 from gbmaker import GrainGenerator, GrainBoundary
 from pymatgen.core import Structure
 
 bulk = Structure.from_file(filename="./POSCAR-bulk")
 gg = GrainGenerator(bulk, [3, 1, 0])
-gg.oriented_unit_cell.to("poscar", "ouc_POSCAR")
-grain = next(gg.get_grains(symmetrize=False))
+grain = next(gg)
 
 # Set grain thickness to 5 * the d spacing of the [3, 1, 0] plane, a
 # fractional 0.5 shift in a - b and a symmtric 2.0 spacing between grains.

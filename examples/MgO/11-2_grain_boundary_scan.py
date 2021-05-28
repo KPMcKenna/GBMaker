@@ -1,25 +1,17 @@
-from gbmaker import GrainGenerator, GrainBoundary
+from gbmaker import GrainBoundaryGenerator
 from pymatgen.core import Structure
 
 bulk = Structure.from_file(filename="./POSCAR-bulk")
-gg = GrainGenerator(bulk, [1, 1, -2])
-grain = next(gg.get_grains(symmetrize=False))
-
-# Set grain thickness to 5 * the d spacing of the [1, 1, -2] plane, a
-# 2.0 Angstrom gap between grains.
-grain.hkl_thickness = 5
-translation_vec = [0.0, 0.0, 2.0]
-# this ensures symmetry between both boundaries for mirrored grains
-grain.orthogonal_c = True
-
-# Generate the grain boundary with the above settings and mirror the second
-# grain in z.
-gb = GrainBoundary(
-    grain_0=grain,
-    mirror_z=True,
-    translation_vec=translation_vec,
+gb = next(
+    GrainBoundaryGenerator(
+        bulk,
+        [1, 1, -2],
+        orthogonal_c=True,
+        hkl_thickness=5,
+        translation_vec=[0, 0, 2.0],
+        mirror_z=True,
+    )
 )
-
 
 # Scan the grain boundary
 for grain_boundary in gb.scan(na=5, nb=5):

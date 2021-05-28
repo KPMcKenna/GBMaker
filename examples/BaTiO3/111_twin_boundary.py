@@ -1,14 +1,12 @@
-import numpy as np
 from gbmaker import GrainGenerator, GrainBoundary
 from pymatgen.core import Structure
 from pymatgen.vis.structure_vtk import MultiStructuresVis
 
 bulk = Structure.from_file(filename="./POSCAR-bulk")
-gg = GrainGenerator(bulk, [1, 1, 1])
-grains = list(gg.get_grains(symmetrize=True))
+gg = GrainGenerator(bulk, [1, 1, 1], symmetrize=True)
+grains = gg.get_grains()
 
 structures = [g.get_structure() for g in grains]
-print(structures)
 
 vis = MultiStructuresVis()
 vis.set_structures(structures)
