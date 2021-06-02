@@ -31,6 +31,7 @@ class GrainGenerator(SlabGenerator):
         symmetrize: bool = False,
         repair: bool = False,
         orthogonal_c: bool = False,
+        relative_to_bulk: bool = False,
     ):
         """Initialise the GrainGenerator class from any bulk structure.
 
@@ -40,21 +41,24 @@ class GrainGenerator(SlabGenerator):
         returned cell is fairly primitive. Attempts are made to orthogonalise
         the cell without increasing the number of atoms in the oriented unit cell.
         """
-        sg = SpacegroupAnalyzer(bulk_cell)
-        unit_cell = sg.get_conventional_standard_structure()
-        if unit_cell != bulk_cell:
-            Warnings.UnitCell(unit_cell)
-        primitive_cell = sg.get_primitive_standard_structure()
-        T = sg.get_conventional_to_primitive_transformation_matrix()
-        # calculate the miller index relative to the primitive cell
-        primitive_miller_index = np.dot(T, miller_index)
-        primitive_miller_index /= reduce(float_gcd, primitive_miller_index)
-        primitive_miller_index = np.array(
-            np.round(primitive_miller_index, 1), dtype=int
-        )
-        super().__init__(primitive_cell, primitive_miller_index, None, None)
-        # use the conventional standard structure and the supplied miller index
-        self.parent = unit_cell
+        if relative_to_bulk:
+            super().__init__(bulk_cell, miller_index, None, None)
+        else:
+            sg = SpacegroupAnalyzer(bulk_cell)
+            unit_cell = sg.get_conventional_standard_structure()
+            if unit_cell != bulk_cell:
+                Warnings.UnitCell(unit_cell)
+            primitive_cell = sg.get_primitive_standard_structure()
+            T = sg.get_conventional_to_primitive_transformation_matrix()
+            # calculate the miller index relative to the primitive cell
+            primitive_miller_index = np.dot(T, miller_index)
+            primitive_miller_index /= reduce(float_gcd, primitive_miller_index)
+            primitive_miller_index = np.array(
+                np.round(primitive_miller_index, 1), dtype=int
+            )
+            super().__init__(primitive_cell, primitive_miller_index, None, None)
+            # use the conventional standard structure and the supplied miller index
+            self.parent = unit_cell
         self.miller_index = np.array(miller_index)
         self.orthogonal_c = orthogonal_c
         c_ranges = set() if bonds is None else self._get_c_ranges(bonds)
@@ -112,6 +116,33 @@ class GrainGenerator(SlabGenerator):
     def __next__(self) -> "Grain":
         return self.iter.__next__()
 
+    @classmethod
+    def from_file(
+        cls,
+        filename: str,
+        miller_index: ArrayLike,
+        bonds: Optional[Dict[Sequence[SpeciesLike], float]] = None,
+        ftol: float = 0.1,
+        tol: float = 0.1,
+        max_broken_bonds: int = 0,
+        symmetrize: bool = False,
+        repair: bool = False,
+        orthogonal_c: bool = False,
+        relative_to_bulk: bool = False,
+    ) -> "GrainGenerator":
+        return cls(
+            Structure.from_file(filename),
+            miller_index,
+            bonds,
+            ftol,
+            tol,
+            max_broken_bonds,
+            symmetrize,
+            repair,
+            orthogonal_c,
+            relative_to_bulk,
+        )
+
 
 class GrainBoundaryGenerator:
     """A class for generating GrainBoundary classes."""
@@ -125,6 +156,7 @@ class GrainBoundaryGenerator:
         mirror_x: bool = False,
         mirror_y: bool = False,
         mirror_z: bool = False,
+        average_lattice: bool = False,
         vacuum: Optional[float] = None,
         translation_vec: ArrayLike = [0.0, 0.0, 0.0],
         merge_tol: Optional[float] = None,
@@ -139,6 +171,8 @@ class GrainBoundaryGenerator:
         thickness: Optional[float] = None,
         hkl_thickness: Optional[float] = None,
         orthogonal_c: bool = False,
+        relative_to_bulk_0: bool = False,
+        relative_to_bulk_1: bool = False,
     ):
         """Initialise the generator with either one or two bulk structures.
 
@@ -159,6 +193,7 @@ class GrainBoundaryGenerator:
             symmetrize,
             repair,
             orthogonal_c,
+            relative_to_bulk_0,
         ).get_grains()
         for g in self.grains_0:
             if hkl_thickness is not None:
@@ -181,6 +216,7 @@ class GrainBoundaryGenerator:
                 symmetrize,
                 repair,
                 orthogonal_c,
+                relative_to_bulk_1,
             ).get_grains()
             for g in self.grains_1:
                 if hkl_thickness is not None:
@@ -197,6 +233,7 @@ class GrainBoundaryGenerator:
                     mirror_x=mirror_x,
                     mirror_y=mirror_y,
                     mirror_z=mirror_z,
+                    average_lattice=average_lattice,
                     vacuum=vacuum,
                     translation_vec=translation_vec,
                     merge_tol=merge_tol,
@@ -212,6 +249,7 @@ class GrainBoundaryGenerator:
                     mirror_x=mirror_x,
                     mirror_y=mirror_y,
                     mirror_z=mirror_z,
+                    average_lattice=average_lattice,
                     vacuum=vacuum,
                     translation_vec=translation_vec,
                     merge_tol=merge_tol,
@@ -244,6 +282,7 @@ class GrainBoundaryGenerator:
         mirror_x: bool = False,
         mirror_y: bool = False,
         mirror_z: bool = False,
+        average_lattice: bool = False,
         vacuum: Optional[float] = None,
         translation_vec: ArrayLike = [0.0, 0.0, 0.0],
         merge_tol: Optional[float] = None,
@@ -258,6 +297,8 @@ class GrainBoundaryGenerator:
         thickness: Optional[float] = None,
         hkl_thickness: Optional[float] = None,
         orthogonal_c: bool = False,
+        relative_to_bulk_0: bool = False,
+        relative_to_bulk_1: bool = False,
     ) -> "GrainBoundaryGenerator":
         """Convience method for creating GrainBoundaries from files.
 
@@ -275,6 +316,7 @@ class GrainBoundaryGenerator:
             mirror_x=mirror_x,
             mirror_y=mirror_y,
             mirror_z=mirror_z,
+            average_lattice=average_lattice,
             vacuum=vacuum,
             translation_vec=translation_vec,
             merge_tol=merge_tol,
@@ -289,6 +331,8 @@ class GrainBoundaryGenerator:
             thickness=thickness,
             hkl_thickness=hkl_thickness,
             orthogonal_c=orthogonal_c,
+            relative_to_bulk_0=relative_to_bulk_0,
+            relative_to_bulk_1=relative_to_bulk_1,
         )
 
 
@@ -1020,6 +1064,7 @@ class GrainBoundary:
         mirror_x: Optional[bool] = None,
         mirror_y: Optional[bool] = None,
         mirror_z: Optional[bool] = None,
+        average_lattice: bool = False,
         translation_vec: ArrayLike = [0.0, 0.0, 0.0],
         vacuum: Optional[float] = None,
         merge_tol: Optional[float] = None,
@@ -1038,10 +1083,14 @@ class GrainBoundary:
         self.grain_1.mirror_z = (
             mirror_z if mirror_z is not None else self.grain_1.mirror_z
         )
+        # If either grain is orthogonal both must be orthogonal_c
+        if grain_0.orthogonal_c or grain_1.orthogonal_c:
+            self.orthogonalise_c()
         self.translation_vec = translation_vec
         self.vacuum = vacuum
         self.reconstruction = reconstruction
         self.merge_tol = merge_tol
+        self.average_lattice = average_lattice
 
     @property
     def lattice(self) -> Lattice:
@@ -1055,6 +1104,11 @@ class GrainBoundary:
         )
         lattice = self.grain_0.lattice.matrix.copy()
         lattice[2] *= height / lattice[2, 2]
+        if self.average_lattice:
+            lattice[0] /= self.grain_0.lattice.a
+            lattice[0] *= (self.grain_0.lattice.a + self.grain_1.lattice.a) / 2
+            lattice[1] /= self.grain_0.lattice.b
+            lattice[1] *= (self.grain_0.lattice.b + self.grain_1.lattice.b) / 2
         return Lattice(lattice)
 
     @property
@@ -1169,9 +1223,11 @@ class GrainBoundary:
         """Get the pymatgen.core.Structure object for the GrainBoundary."""
         grain_0 = self.grain_0.get_structure(reconstruction=self.reconstruction)
         grain_1 = self.grain_1.get_structure(reconstruction=self.reconstruction)
-        coords = grain_0.lattice.get_cartesian_coords(grain_1.frac_coords)
-        coords[:, 2] = grain_1.cart_coords[:, 2]
-        coords = np.add(coords, self.grain_offset)
+        coords_0 = self.lattice.get_cartesian_coords(grain_0.frac_coords)
+        coords_0[:, 2] = grain_0.cart_coords[:, 2]
+        coords_1 = self.lattice.get_cartesian_coords(grain_1.frac_coords)
+        coords_1[:, 2] = grain_1.cart_coords[:, 2]
+        coords_1 = np.add(coords_1, self.grain_offset)
         site_properties = {
             k: np.concatenate([v, grain_1.site_properties[k]])
             for k, v in grain_0.site_properties.items()
@@ -1183,7 +1239,7 @@ class GrainBoundary:
         grain_boundary = Structure(
             self.lattice,
             np.concatenate([grain_0.species, grain_1.species]),
-            np.concatenate([grain_0.cart_coords, coords]),
+            np.concatenate([coords_0, coords_1]),
             to_unit_cell=True,
             coords_are_cartesian=True,
             site_properties=site_properties,
@@ -1215,6 +1271,7 @@ class GrainBoundary:
             None,
             None,
             None,
+            self.average_lattice,
             self.translation_vec.copy(),
             self.vacuum,
             self.merge_tol,
