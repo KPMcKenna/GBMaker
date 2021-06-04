@@ -1,6 +1,8 @@
-from gbmaker.gbmaker import (
+from gbmaker.grain import (
     Grain,
-    GrainBoundary,
     GrainGenerator,
+)
+from gbmaker.grain_boundary import (
+    GrainBoundary,
     GrainBoundaryGenerator,
 )
