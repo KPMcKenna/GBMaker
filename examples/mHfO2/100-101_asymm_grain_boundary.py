@@ -1,6 +1,5 @@
 from gbmaker import GrainGenerator, GrainBoundary
 from pymatgen.core import Structure
-
 # from pymatgen.vis.structure_vtk import MultiStructuresVis
 import numpy as np
 
@@ -45,16 +44,7 @@ grain1.orthogonal_c = True
 grain1.make_supercell((1, 2))
 grain1.get_sorted_structure().to("poscar", "101_grain.vasp")
 
-# 3. Generate the grain boundary with the above settings
-# scale to average strain to make commensurate (not sure if this is right?)
-# grain0_b=grain0.lattice.matrix[1,1]
-# grain1_b=grain1.lattice.matrix[1,1]
-# average_b=(grain0_b+grain1_b)/2.0
-# scale=average_b/grain0_b
-# grain0.ab_scale=[1.0,scale]
-# scale=average_b/grain1_b
-# grain1.ab_scale=[1.0,scale]
-
+# 3. Generate the grain boundary with the above settings and scale ab to average
 gb = GrainBoundary(
     grain_0=grain0,
     grain_1=grain1,
