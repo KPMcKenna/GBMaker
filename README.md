@@ -9,7 +9,8 @@ Then, with that environment activated (if created), run:
 pip install .
 ```
 
-for optional visualisation module:
+To install the dependancies required for visualisation or the tutorial:
 ```
 pip install .\[vis\]
+pip install .\[tutorial\]
 ```

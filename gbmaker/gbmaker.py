@@ -465,7 +465,7 @@ class Grain:
     @bonds.setter
     def bonds(self, bonds: Optional[Dict[Sequence[SpeciesLike], float]]):
         """Set the maximum bond length between pairs of atoms for repairing."""
-        self._bonds = bonds
+        self._bonds = dict(bonds) if bonds is not None else None
         # if the surface is to be symmetrized, check that this is still possible.
         if self.symmetrize:
             self.__delattr__("_symmetrize")
@@ -475,7 +475,7 @@ class Grain:
             else:
                 warnings.warn("Can no longer symmetrize surfaces.")
         # calculate the extra thicknes this repairing adds to the Grain.
-        self._extra_thickness = (
+        self._extra_thickness = float(
             self.get_structure().cart_coords.max(axis=0)[2]
             - self.bulk_thickness * self.bulk_repeats
         )
@@ -595,7 +595,7 @@ class Grain:
     @orthogonal_c.setter
     def orthogonal_c(self, b: bool):
         """Sets whether to orthogonalise the c-vector."""
-        self._orth_c = b
+        self._orth_c = bool(b)
 
     def can_symmetrize_surfaces(self, set_symmetrize: bool = False) -> bool:
         """Checks if the surfaces of the Grain can be symmetrized.
