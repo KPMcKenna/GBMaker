@@ -18,3 +18,7 @@ class Warnings:
     def UnitCell(cls, unit_cell: Structure):
         warnings.warn(f"Non-conventional unit cell supplied, using:\n{unit_cell}")
         return
+
+    @classmethod
+    def BrokenBonds(cls, bb: int):
+        warnings.warn(f"After repairing there are still {bb} broken_bonds.")

@@ -3,12 +3,13 @@ from functools import reduce
 from pymatgen.core import Structure, Lattice, Site, PeriodicSite, IStructure
 from pymatgen.core.surface import SlabGenerator, Slab
 from pymatgen.core.operations import SymmOp
+from pymatgen.core.periodic_table import get_el_sp
 from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
 from pymatgen.analysis.structure_matcher import StructureMatcher
 from .utils import float_gcd, orthogonalise, rotation
 from typing import Dict, Sequence, Any, Callable, Optional, List, Iterator
 from numpy.typing import ArrayLike
-from pymatgen.util.typing import SpeciesLike
+from pymatgen.util.typing import SpeciesLike, CompositionLike
 from .warnings import Warnings
 import warnings
 
@@ -24,7 +25,7 @@ class GrainGenerator(SlabGenerator):
         self,
         bulk_cell: Structure,
         miller_index: ArrayLike,
-        bonds: Optional[Dict[Sequence[SpeciesLike], float]] = None,
+        bonds: Optional[Dict[CompositionLike, Dict[CompositionLike, float]]] = None,
         ftol: float = 0.1,
         tol: float = 0.1,
         max_broken_bonds: int = 0,
@@ -61,7 +62,12 @@ class GrainGenerator(SlabGenerator):
             self.parent = unit_cell
         self.miller_index = np.array(miller_index)
         self.orthogonal_c = orthogonal_c
-        c_ranges = set() if bonds is None else self._get_c_ranges(bonds)
+        pymatgen_bonds = {}
+        for el_0, d in bonds.items():
+            pymatgen_bonds.update(
+                {(el_0, el_1): bond_length for el_1, bond_length in d.items()}
+            )
+        c_ranges = set() if bonds is None else self._get_c_ranges(pymatgen_bonds)
 
         grains = []
         for shift in self._calculate_possible_shifts(tol=ftol):
@@ -166,7 +172,7 @@ class Grain:
         mirror_y: bool = False,
         mirror_z: bool = False,
         hkl_spacing: Optional[float] = None,
-        bonds: Optional[Dict[Sequence[SpeciesLike], float]] = None,
+        bonds: Optional[Dict[CompositionLike, Dict[CompositionLike, float]]] = None,
         orthogonal_c: bool = False,
     ):
         """Initialise the grain from an oriented unit cell and Structure kwargs.
@@ -274,12 +280,14 @@ class Grain:
         return self.sites[ind]
 
     @property
-    def bonds(self) -> Optional[Dict[Sequence[SpeciesLike], float]]:
+    def bonds(self) -> Optional[Dict[CompositionLike, Dict[CompositionLike, float]]]:
         """Dictonary of pairs of atomic species and their maximum bond length."""
         return self._bonds
 
     @bonds.setter
-    def bonds(self, bonds: Optional[Dict[Sequence[SpeciesLike], float]]):
+    def bonds(
+        self, bonds: Optional[Dict[CompositionLike, Dict[CompositionLike, float]]]
+    ):
         """Set the maximum bond length between pairs of atoms for repairing."""
         self._bonds = dict(bonds) if bonds is not None else None
         # if the surface is to be symmetrized, check that this is still possible.
@@ -765,53 +773,90 @@ class Grain:
             return struct
         else:
             struct = Structure.from_sites(struct)
-        for pair in self.bonds.keys():
-            blength = self.bonds[pair]
-            # First lets determine which element should be the
-            # reference (center element) to determine broken bonds.
-            # e.g. P for a PO4 bond. Find integer coordination
-            # numbers of the pair of elements wrt to each other
-            cn_dict = {}
-            for i, el in enumerate(pair):
-                cnlist = set()
-                for site in self.oriented_unit_cell:
-                    poly_coord = 0
-                    if site.species_string == el:
-                        for nn in self.oriented_unit_cell.get_neighbors(site, blength):
-                            if nn[0].species_string == pair[i - 1]:
-                                poly_coord += 1
-                        cnlist.add(poly_coord)
-                cn_dict[el] = cnlist
-            # We make the element with the higher coordination our reference
-            if max(cn_dict[pair[0]]) > max(cn_dict[pair[1]]):
-                element1, element2 = pair
-            else:
-                element2, element1 = pair
-            for i, site in enumerate(struct):
-                # Determine the coordination of our reference
-                if site.species_string == element1:
-                    poly_coord = 0
-                    for neighbor in struct.get_neighbors(site, blength):
-                        poly_coord += 1 if neighbor.species_string == element2 else 0
-                    # suppose we find an undercoordinated reference atom
-                    if poly_coord not in cn_dict[element1]:
-                        # We get the reference atom of the broken bonds
-                        # (undercoordinated), move it to the other surface
-                        struct = self.move_to_other_side(struct, [i])
-                        # find its NNs with the corresponding
-                        # species it should be coordinated with
-                        neighbors = struct.get_neighbors(
-                            struct[i], blength, include_index=True
-                        )
-                        tomove = [
-                            nn[2]
-                            for nn in neighbors
-                            if nn[0].species_string == element2
-                        ]
-                        tomove.append(i)
-                        # and then move those NNs along with the central
-                        # atom back to the other side of the slab again
-                        struct = self.move_to_other_side(struct, tomove)
+            struct.sort(
+                key=lambda s: (
+                    s.z,
+                    s.species.average_electroneg,
+                    s.species_string,
+                    s.x,
+                    s.y,
+                )
+            )
+            struct_iter_len = np.prod(self.ab_scale) * len(self.oriented_unit_cell)
+        coordination = {}
+        for element_0, bond_lengths in self.bonds.items():
+            for site in self.oriented_unit_cell:
+                coord = {}
+                if site.species_string == element_0:
+                    for neighbour in self.oriented_unit_cell.get_neighbors(
+                        site, max(bond_lengths.values())
+                    ):
+                        try:
+                            bond_length = bond_lengths[neighbour[0].species_string]
+                            cbe, _ = coord.get(neighbour[0].bulk_equivalent, (0, 0))
+                            coord[neighbour[0].bulk_equivalent] = (cbe + 1, bond_length)
+                        except KeyError:
+                            continue
+                else:
+                    try:
+                        bond_length = bond_lengths[site.species_string]
+                        for neighbour in self.oriented_unit_cell.get_neighbors(
+                            site, bond_length
+                        ):
+                            if neighbour[0].species_string == element_0:
+                                cbe, _ = coord.get(neighbour[0].bulk_equivalent, (0, 0))
+                                coord[neighbour.bulk_equivalent] = (
+                                    cbe + 1,
+                                    bond_length,
+                                )
+                    except KeyError:
+                        continue
+                try:
+                    coordination[site.bulk_equivalent].update(coord)
+                except KeyError:
+                    coordination[site.bulk_equivalent] = coord
+        fixed = set()
+        fixed_len = -1
+        while len(fixed) != fixed_len:
+            fixed_len = len(fixed)
+            for i in range(struct_iter_len):
+                site = struct._sites[i]
+                try:
+                    coord = coordination[site.bulk_equivalent]
+                except KeyError:
+                    continue
+                site_coord = 0
+                to_move = [
+                    i,
+                ]
+                for be, (co, bl) in coord.items():
+                    site_coord += co
+                    for neighbour in struct.get_neighbors(site, bl, include_index=True):
+                        if neighbour[0].bulk_equivalent == be:
+                            site_coord -= 1
+                            to_move.append(neighbour[2])
+                if site_coord > 0 and i not in fixed:
+                    struct = self.move_to_other_side(struct, to_move)
+                    fixed.update(to_move)
+                    for be, (co, bl) in coord.items():
+                        for neighbour in struct.get_neighbors(
+                            struct[i], bl, include_index=True
+                        ):
+                            if neighbour[0].bulk_equivalent == be:
+                                fixed.add(neighbour[2])
+        broken_bonds = 0
+        for site in struct:
+            try:
+                coord = coordination[site.bulk_equivalent]
+            except KeyError:
+                continue
+            for be, (co, bl) in coord.items():
+                broken_bonds += co
+                for neighbour in struct.get_neighbors(site, bl):
+                    if neighbour[0].bulk_equivalent == be:
+                        broken_bonds -= 1
+        if broken_bonds > 0:
+            Warnings.BrokenBonds(broken_bonds)
         struct.translate_sites(
             range(len(struct)),
             [0, 0, -struct.frac_coords.min(axis=0)[2]],
