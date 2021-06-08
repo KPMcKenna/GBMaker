@@ -8,8 +8,8 @@ bonds = {
 }
 
 bulk = Structure.from_file(filename="./POSCAR-bulk")
-gg = GrainGenerator(bulk, [2, 1, 0], symmetrize=False, repair=True, bonds=bonds)
+gg = GrainGenerator(bulk, [2, 1, 0], symmetrize=False, repair=True, bonds=bondlengths)
 
 # visualise to determine appropriate termination
 for i, g in enumerate(gg):
-    g.get_sorted_structure().to("poscar", f"{i}-210_grain.vasp")
+    g.get_sorted_structure().to("poscar", f"{i}_210_grain.vasp")

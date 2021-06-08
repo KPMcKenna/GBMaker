@@ -25,7 +25,7 @@ class GrainGenerator(SlabGenerator):
         self,
         bulk_cell: Structure,
         miller_index: ArrayLike,
-        bonds: Optional[Dict[CompositionLike, Dict[CompositionLike, float]]] = None,
+        bonds: Optional[Dict[Sequence[SpeciesLike], float]] = None,
         ftol: float = 0.1,
         tol: float = 0.1,
         max_broken_bonds: int = 0,
@@ -62,12 +62,7 @@ class GrainGenerator(SlabGenerator):
             self.parent = unit_cell
         self.miller_index = np.array(miller_index)
         self.orthogonal_c = orthogonal_c
-        pymatgen_bonds = {}
-        for el_0, d in bonds.items():
-            pymatgen_bonds.update(
-                {(el_0, el_1): bond_length for el_1, bond_length in d.items()}
-            )
-        c_ranges = set() if bonds is None else self._get_c_ranges(pymatgen_bonds)
+        c_ranges = set() if bonds is None else self._get_c_ranges(bonds)
 
         grains = []
         for shift in self._calculate_possible_shifts(tol=ftol):
@@ -172,7 +167,7 @@ class Grain:
         mirror_y: bool = False,
         mirror_z: bool = False,
         hkl_spacing: Optional[float] = None,
-        bonds: Optional[Dict[CompositionLike, Dict[CompositionLike, float]]] = None,
+        bonds: Optional[Dict[Sequence[SpeciesLike], float]] = None,
         orthogonal_c: bool = False,
     ):
         """Initialise the grain from an oriented unit cell and Structure kwargs.
@@ -280,14 +275,12 @@ class Grain:
         return self.sites[ind]
 
     @property
-    def bonds(self) -> Optional[Dict[CompositionLike, Dict[CompositionLike, float]]]:
+    def bonds(self) -> Optional[Dict[Sequence[SpeciesLike], float]]:
         """Dictonary of pairs of atomic species and their maximum bond length."""
         return self._bonds
 
     @bonds.setter
-    def bonds(
-        self, bonds: Optional[Dict[CompositionLike, Dict[CompositionLike, float]]]
-    ):
+    def bonds(self, bonds: Optional[Dict[Sequence[SpeciesLike], float]]):
         """Set the maximum bond length between pairs of atoms for repairing."""
         self._bonds = dict(bonds) if bonds is not None else None
         # if the surface is to be symmetrized, check that this is still possible.
@@ -783,34 +776,60 @@ class Grain:
                 )
             )
             struct_iter_len = np.prod(self.ab_scale) * len(self.oriented_unit_cell)
+            bonds = {}
+            for (element_0, element_1), bond_length in self.bonds.items():
+                try:
+                    bonds[get_el_sp(element_0)].update(
+                        {get_el_sp(element_1): bond_length}
+                    )
+                except KeyError:
+                    el_1 = get_el_sp(element_1)
+                    bond = bonds.get(el_1, {})
+                    bond[get_el_sp(element_0)] = bond_length
+                    bonds[el_1] = bond
+
         coordination = {}
-        for element_0, bond_lengths in self.bonds.items():
+        for element_0, bond_lengths in bonds.items():
             for site in self.oriented_unit_cell:
                 coord = {}
-                if site.species_string == element_0:
+                if any(element == element_0 for element in site.species.elements):
                     for neighbour in self.oriented_unit_cell.get_neighbors(
                         site, max(bond_lengths.values())
                     ):
-                        try:
-                            bond_length = bond_lengths[neighbour[0].species_string]
-                            cbe, _ = coord.get(neighbour[0].bulk_equivalent, (0, 0))
-                            coord[neighbour[0].bulk_equivalent] = (cbe + 1, bond_length)
-                        except KeyError:
-                            continue
-                else:
-                    try:
-                        bond_length = bond_lengths[site.species_string]
-                        for neighbour in self.oriented_unit_cell.get_neighbors(
-                            site, bond_length
-                        ):
-                            if neighbour[0].species_string == element_0:
+                        for el in neighbour[0].species.elements:
+                            try:
+                                bond_length = bond_lengths[el]
                                 cbe, _ = coord.get(neighbour[0].bulk_equivalent, (0, 0))
-                                coord[neighbour.bulk_equivalent] = (
-                                    cbe + 1,
+                                coord[neighbour[0].bulk_equivalent] = (
+                                    cbe
+                                    + neighbour[0].species.fractional_composition[el],
                                     bond_length,
                                 )
-                    except KeyError:
-                        continue
+                            except KeyError:
+                                continue
+                else:
+                    for el in site.species.elements:
+                        try:
+                            bond_length = bond_lengths[el]
+                            for neighbour in self.oriented_unit_cell.get_neighbors(
+                                site, bond_length
+                            ):
+                                if any(
+                                    el == element_0
+                                    for el in neighbour[0].species.elements
+                                ):
+                                    cbe, _ = coord.get(
+                                        neighbour[0].bulk_equivalent, (0, 0)
+                                    )
+                                    coord[neighbour[0].bulk_equivalent] = (
+                                        cbe
+                                        + neighbour[0].species.fractional_composition[
+                                            element_0
+                                        ],
+                                        bond_length,
+                                    )
+                        except KeyError:
+                            continue
                 try:
                     coordination[site.bulk_equivalent].update(coord)
                 except KeyError:
