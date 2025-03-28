@@ -4,12 +4,15 @@ from pymatgen.core import Structure, Lattice, Site, PeriodicSite, IStructure
 from pymatgen.core.surface import SlabGenerator, Slab
 from pymatgen.core.operations import SymmOp
 from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
+from pymatgen.core.periodic_table import get_el_sp
 from pymatgen.analysis.structure_matcher import StructureMatcher
 from .utils import float_gcd, orthogonalise, rotation
 from typing import Dict, Sequence, Any, Callable, Optional, List, Iterator
 from numpy.typing import ArrayLike
+from scipy.cluster.hierarchy import fcluster, linkage
 from pymatgen.util.typing import SpeciesLike
 from .warnings import Warnings
+from itertools import combinations
 import warnings
 
 
@@ -150,6 +153,56 @@ class GrainGenerator(SlabGenerator):
             relative_to_bulk,
         )
 
+    def _calculate_possible_shifts(self, tol=0.1):
+        """Removed in an earlier version of Pymatgen, attempted to recreate here."""
+        c_proj_distvec = np.array(
+            [
+                self._proj_height * ((fc1[2] - fc2[2]) % 1)
+                for fc1, fc2 in combinations(self.oriented_unit_cell.frac_coords, 2)
+            ]
+        )
+        clusters = fcluster(linkage(c_proj_distvec), tol, criterion="distance")
+        c_shifts = np.zeros((max(clusters), 2)) + 1
+        # get the average c distance of the atoms in each cluster
+        for fc, index in zip(self.oriented_unit_cell.frac_coords, clusters):
+            i = index - 1
+            c_shifts[i] += [fc[2], 1]
+        c_shifts[:, 0] /= c_shifts[:, 1]
+        # get the distance between each cluster
+        shifts = [
+            (shift + c_shifts[-i, 0]) * 0.5
+            for i, shift in enumerate(sorted(c_shifts[:, 0], reverse=True))
+        ]
+        # extra shift for first to last (or only) that needs folding into unit cell
+        shifts[0] += 0.5
+        if shifts[0] > 1:
+            shifts[0] -= 1
+        return sorted(shifts)
+
+    def _get_c_ranges(self, bonds):
+        """Removed in an earlier version of Pymatgen, attempted to recreate here."""
+        c_ranges = []
+        for (s1, s2), bond_dist in bonds.items():
+            s1 = get_el_sp(s1)
+            for site in self.oriented_unit_cell:
+                if s1 in site.species:
+                    s2 = get_el_sp(s2)
+                    for nn in self.oriented_unit_cell.get_neighbors(site, bond_dist):
+                        if s2 in nn.species:
+                            if nn.frac_coords[2] > 1:
+                                c_ranges.append((site.frac_coords[2], 1))
+                                c_ranges.append((0, nn.frac_coords[2] - 1))
+                            elif nn.frac_coords[2] < 0:
+                                c_ranges.append((0, site.frac_coords[2]))
+                                c_ranges.append((nn.frac_coords[2] + 1, 1))
+                            elif nn.frac_coords[2] != site.frac_coords[2]:
+                                c_ranges.append(
+                                    tuple(
+                                        sorted(site.frac_coords[2], nn.frac_coords[2])
+                                    )
+                                )
+        return c_ranges
+
 
 class Grain:
     """A grain class the builds upon a pymatgen Structure.
@@ -212,7 +265,7 @@ class Grain:
         except AttributeError:
             ouc_len = (
                 self.bulk_repeats
-                * np.product(self.ab_scale)
+                * np.prod(self.ab_scale)
                 * len(self.oriented_unit_cell)
             )
             return ouc_len
@@ -256,7 +309,7 @@ class Grain:
         # if the unit cell has charge multiply that charge up with the repeats.
         try:
             chg = self.oriented_unit_cell.charge * (self.bulk_repeats + self.symmetrize)
-            chg *= np.product(self.ab_scale)
+            chg *= np.prod(self.ab_scale)
         except TypeError:
             chg = None
         return chg
