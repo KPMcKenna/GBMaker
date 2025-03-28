@@ -5,6 +5,9 @@ bulk = Structure.from_file(filename="./POSCAR-bulk")
 gg = GrainGenerator(bulk, [1, 0, 0])
 grains = gg.get_grains()
 
+for i, g in enumerate(grains):
+    g.get_sorted_structure().to(fmt="poscar", filename=f"{i}-POSCAR.vasp")
+
 grain = grains[0]
 
 # Set grain thickness to 5 * the d spacing of the [1, 1, 1] plane, a
@@ -20,4 +23,4 @@ gb.translation_vec += (
 ) * gb.grain_0.lattice.matrix[2]
 
 # Output the grain boundary
-gb.get_sorted_structure().to("poscar", "100_stacking_fault.vasp")
+gb.get_sorted_structure().to(fmt="poscar", filename="100_stacking_fault.vasp")
