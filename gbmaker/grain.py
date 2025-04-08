@@ -15,6 +15,9 @@ from .warnings import Warnings
 from itertools import combinations
 import warnings
 
+import math
+from scipy.spatial.distance import squareform
+
 
 class GrainGenerator(SlabGenerator):
     """Class for generating Grains.
@@ -155,29 +158,31 @@ class GrainGenerator(SlabGenerator):
 
     def _calculate_possible_shifts(self, tol=0.1):
         """Removed in an earlier version of Pymatgen, attempted to recreate here."""
-        c_proj_distvec = np.array(
-            [
-                self._proj_height * ((fc1[2] - fc2[2]) % 1)
-                for fc1, fc2 in combinations(self.oriented_unit_cell.frac_coords, 2)
-            ]
+        c_proj_distvec = np.zeros(
+            len(self.oriented_unit_cell) * (len(self.oriented_unit_cell) - 1) // 2
         )
+        for i, (fc1, fc2) in enumerate(
+            combinations(self.oriented_unit_cell.frac_coords, 2)
+        ):
+            c_ij = abs(fc1[2] - fc2[2])
+            periodic_correction = c_ij - 0.5
+            c_ij -= (periodic_correction > 0) * 2 * periodic_correction
+            c_proj_distvec[i] = c_ij * self._proj_height
         clusters = fcluster(linkage(c_proj_distvec), tol, criterion="distance")
-        c_shifts = np.zeros((max(clusters), 2)) + 1
+        n_clusters = max(clusters)
+        c_shifts = np.zeros(n_clusters) + 1
         # get the average c distance of the atoms in each cluster
         for fc, index in zip(self.oriented_unit_cell.frac_coords, clusters):
             i = index - 1
-            c_shifts[i] += [fc[2], 1]
-        c_shifts[:, 0] /= c_shifts[:, 1]
+            c_shifts[i] = min(c_shifts[i], fc[2])
+        c_shifts = sorted(c_shifts, reverse=True)
         # get the distance between each cluster
-        shifts = [
-            (shift + c_shifts[-i, 0]) * 0.5
-            for i, shift in enumerate(sorted(c_shifts[:, 0], reverse=True))
-        ]
+        shifts = [(c_shifts[-(i + 1)] + c_shifts[-i]) * 0.5 for i in range(n_clusters)]
         # extra shift for first to last (or only) that needs folding into unit cell
         shifts[0] += 0.5
         if shifts[0] > 1:
             shifts[0] -= 1
-        return sorted(shifts)
+        return shifts
 
     def _get_c_ranges(self, bonds):
         """Removed in an earlier version of Pymatgen, attempted to recreate here."""
