@@ -179,6 +179,12 @@ class GrainGenerator(SlabGenerator):
         shifts[0] += 0.5
         if shifts[0] > 1:
             shifts[0] -= 1
+        if shifts[0] > shifts[1]:
+            s = shifts.pop(0)
+            for i, shift in enumerate(shifts):
+                if s < shift:
+                    shifts.insert(s, i)
+                    break
         return shifts
 
     def _get_c_ranges(self, bonds):
