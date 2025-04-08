@@ -15,9 +15,6 @@ from .warnings import Warnings
 from itertools import combinations
 import warnings
 
-import math
-from scipy.spatial.distance import squareform
-
 
 class GrainGenerator(SlabGenerator):
     """Class for generating Grains.
