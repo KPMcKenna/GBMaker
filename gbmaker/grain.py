@@ -176,15 +176,18 @@ class GrainGenerator(SlabGenerator):
         # get the distance between each cluster
         shifts = [(c_shifts[-(i + 1)] + c_shifts[-i]) * 0.5 for i in range(n_clusters)]
         # extra shift for first to last (or only) that needs folding into unit cell
+        print(np.array(shifts))
         shifts[0] += 0.5
-        if shifts[0] > 1:
+        if shifts[0] >= 1.0:
             shifts[0] -= 1
         if shifts[0] > shifts[1]:
             s = shifts.pop(0)
             for i, shift in enumerate(shifts):
                 if s < shift:
                     shifts.insert(s, i)
-                    break
+                    return shifts
+            shifts.append(s)
+        print(np.array(shifts))
         return shifts
 
     def _get_c_ranges(self, bonds):
@@ -205,8 +208,9 @@ class GrainGenerator(SlabGenerator):
                                 c_ranges.append((nn.frac_coords[2] + 1, 1))
                             elif nn.frac_coords[2] != site.frac_coords[2]:
                                 c_ranges.append(
-                                    tuple(
-                                        sorted(site.frac_coords[2], nn.frac_coords[2])
+                                    (
+                                        min(site.frac_coords[2], nn.frac_coords[2]),
+                                        max(site.frac_coords[2], nn.frac_coords[2]),
                                     )
                                 )
         return c_ranges
