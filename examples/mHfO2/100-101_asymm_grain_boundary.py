@@ -1,5 +1,6 @@
 from gbmaker import GrainGenerator, GrainBoundary
 from pymatgen.core import Structure
+
 # from pymatgen.vis.structure_vtk import MultiStructuresVis
 import numpy as np
 
@@ -12,7 +13,7 @@ grains = gg.get_grains()
 # structures=[]
 # for i, g in enumerate(grains):
 #    g.bulk_repeats=3
-#    g.get_sorted_structure().to("poscar", f"{i}-100_grain.vasp")
+#    g.get_sorted_structure().to(fmt="poscar", filename=f"{i}-100_grain.vasp")
 #    structures.append(g.get_structure())
 
 # vis = MultiStructuresVis()
@@ -24,7 +25,7 @@ grain0 = grains[3]
 grain0.bulk_repeats = 5
 grain0.orthogonal_c = True
 grain0.make_supercell((1, 3))
-grain0.get_sorted_structure().to("poscar", "100_grain.vasp")
+grain0.get_sorted_structure().to(fmt="poscar", filename="100_grain.vasp")
 
 # 2. Generate (101) grain
 gg = GrainGenerator(bulk, [1, 0, 1], symmetrize=False)
@@ -34,7 +35,7 @@ grains = gg.get_grains()
 # structures=[]
 # for i, g in enumerate(grains):
 #    g.bulk_repeats=3
-#    g.get_sorted_structure().to("poscar", f"{i}-101_grain.vasp")
+#    g.get_sorted_structure().to(fmt="poscar", filename=f"{i}-101_grain.vasp")
 #    structures.append(g.get_structure())
 
 # set grain parameters and make supercell
@@ -42,7 +43,7 @@ grain1 = grains[1]
 grain1.bulk_repeats = 6
 grain1.orthogonal_c = True
 grain1.make_supercell((1, 2))
-grain1.get_sorted_structure().to("poscar", "101_grain.vasp")
+grain1.get_sorted_structure().to(fmt="poscar", filename="101_grain.vasp")
 
 # 3. Generate the grain boundary with the above settings and scale ab to average
 gb = GrainBoundary(
@@ -54,4 +55,4 @@ gb = GrainBoundary(
 )
 
 # Output the grain boundary
-gb.get_sorted_structure().to("poscar", "100-101-mHfO2-GB.vasp")
+gb.get_sorted_structure().to(fmt="poscar", filename="100-101-mHfO2-GB.vasp")

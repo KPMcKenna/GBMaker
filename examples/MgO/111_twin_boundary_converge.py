@@ -13,5 +13,5 @@ gbg = GrainBoundaryGenerator.from_file(
 for gb in gbg:
     # Converge slab thickness
     for grain_boundary in gb.convergence(range(6)):
-        grain_boundary.get_sorted_structure().to("poscar", "POSCAR")
+        grain_boundary.get_sorted_structure().to(fmt="poscar", filename="POSCAR")
         # run VASP

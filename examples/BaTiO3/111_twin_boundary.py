@@ -10,7 +10,7 @@ structures = [g.get_structure() for g in grains]
 
 vis = MultiStructuresVis()
 vis.set_structures(structures)
-vis.show()
+# vis.show()
 
 grain = grains[0]
 
@@ -29,4 +29,4 @@ gb = GrainBoundary(
 )
 
 # Output the grain boundary
-gb.get_sorted_structure().to("poscar", "111_BTO-twin.vasp")
+gb.get_sorted_structure().to(fmt="poscar", filename="111_BTO-twin.vasp")

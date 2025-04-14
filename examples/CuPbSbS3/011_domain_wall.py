@@ -15,6 +15,8 @@ view.set_structures(grains)
 view.show()
 
 # orthogonalise the c-vector so that each boundary is symmetric
+for i, g in enumerate(grains):
+    g.get_sorted_structure().to(f"{i}-grain.vasp", fmt="poscar")
 grain = grains[0]
 grain.hkl_thickness = 3.5
 
@@ -23,6 +25,6 @@ translation_vec = [0.0, 0.0, 2.0]
 
 # create a domain wall
 gb = GrainBoundary(grain_0=grain, mirror_y=True, translation_vec=translation_vec)
-gb.get_sorted_structure().to("poscar", "011_domain_wall.vasp")
-gb.grain_0.get_sorted_structure().to("poscar", "./grain_0.vasp")
-gb.grain_1.get_sorted_structure().to("poscar", "./grain_1.vasp")
+gb.get_sorted_structure().to(fmt="poscar", filename="011_domain_wall.vasp")
+gb.grain_0.get_sorted_structure().to(fmt="poscar", filename="./grain_0.vasp")
+gb.grain_1.get_sorted_structure().to(fmt="poscar", filename="./grain_1.vasp")

@@ -25,4 +25,4 @@ gb = GrainBoundary(
 
 
 # Output the grain boundary
-gb.get_sorted_structure().to("poscar", "310_grain_boundary.vasp")
+gb.get_sorted_structure().to(fmt="poscar", filename="310_grain_boundary.vasp")

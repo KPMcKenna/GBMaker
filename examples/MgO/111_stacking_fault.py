@@ -13,4 +13,4 @@ gb.translation_vec += (
 ) * gb.grain_0.lattice.matrix[2]
 
 # Output the grain boundary
-gb.get_sorted_structure().to("poscar", "111_stacking_fault.vasp")
+gb.get_sorted_structure().to(fmt="poscar", filename="111_stacking_fault.vasp")

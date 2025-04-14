@@ -39,4 +39,4 @@ for i in range(1, 5):
     translation_vec = [a_shift, 0, 0]
     translation_vec[2] += 2.5 - ((3 ** 0.5) * gb.grain_0.lattice.a / 6)
     gb.translation_vec = translation_vec
-    gb.get_structure().to("poscar", f"{i}_11-2_gb.vasp")
+    gb.get_structure().to(fmt="poscar", filename=f"{i}_11-2_gb.vasp")

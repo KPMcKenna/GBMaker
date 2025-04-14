@@ -15,4 +15,4 @@ gbg = GrainBoundaryGenerator.from_file(
 )
 
 for i, gb in enumerate(gbg):
-    gb.get_sorted_structure().to("poscar", f"{i}-011_grain_boundary.vasp")
+    gb.get_sorted_structure().to(fmt="poscar", filename=f"{i}-011_grain_boundary.vasp")

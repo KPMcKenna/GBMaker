@@ -10,7 +10,7 @@ grains = gg.get_grains()
 #visualise to determine appropriate termination
 for i, g in enumerate(grains):
     g.bulk_repeats=1
-    g.get_sorted_structure().to("poscar", f"{i}-210_grain.vasp")
+    g.get_sorted_structure().to(fmt="poscar", filename=f"{i}-210_grain.vasp")
 
 
 
